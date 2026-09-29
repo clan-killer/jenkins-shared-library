@@ -1,15 +1,23 @@
-def call() {
+stage('ESLint Summary') {
+    steps {
+        script {
 
-    sh '''
-        export PATH=/home/virendra-mahajan/.nvm/versions/node/v24.*/bin:$PATH
+            def report = readJSON file: 'eslint-report.json'
 
-        node -v
-        npm -v
+            int errors = 0
+            int warnings = 0
 
-        echo "Installing dependencies..."
-        npm install
+            report.each { file ->
+                errors += file.errorCount
+                warnings += file.warningCount
+            }
 
-        echo "Running ESLint..."
-        npm run lint
-    '''
+            echo "ESLint Errors : ${errors}"
+            echo "ESLint Warnings : ${warnings}"
+
+            if (errors > 0) {
+                error("Build failed because ESLint errors were found")
+            }
+        }
+    }
 }
