@@ -1,6 +1,6 @@
 import groovy.json.JsonSlurper
 
-def call() {
+def call(String projectKey) {
 
     withCredentials([
         string(
@@ -9,12 +9,12 @@ def call() {
         )
     ]) {
 
-        sh '''
+        sh """
         curl -s \
-        -u $SONAR_TOKEN: \
-        "http://YOUR_SERVER_IP:9000/api/measures/component?component=nodejs-demo&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density" \
+        -u \$SONAR_TOKEN: \
+        "http://YOUR_SERVER_IP:9000/api/measures/component?component=${projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density" \
         -o sonar-summary.json
-        '''
+        """
 
         def json =
             new JsonSlurper()
