@@ -15,8 +15,16 @@ stage('ESLint Summary') {
             echo "ESLint Errors : ${errors}"
             echo "ESLint Warnings : ${warnings}"
 
+            // Display in Jenkins build history
+            currentBuild.description =
+                "Errors=${errors} Warnings=${warnings}"
+
+            if (warnings > 0) {
+                currentBuild.result = 'UNSTABLE'
+            }
+
             if (errors > 0) {
-                error("Build failed because ESLint errors were found")
+                error("Build failed due to ESLint errors")
             }
         }
     }
