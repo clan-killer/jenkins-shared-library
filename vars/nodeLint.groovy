@@ -1,31 +1,57 @@
-stage('ESLint Summary') {
-    steps {
-        script {
+import groovy.json.JsonSlurper
 
-            def report = readJSON file: 'eslint-report.json'
+def call() {
 
-            int errors = 0
-            int warnings = 0
+    sh '''
+        echo "Node Version:"
+        node -v
 
-            report.each { file ->
-                errors += file.errorCount
-                warnings += file.warningCount
-            }
+        echo "NPM Version:"
+        npm -v
 
-            echo "ESLint Errors : ${errors}"
-            echo "ESLint Warnings : ${warnings}"
+        echo "Installing dependencies..."
+        npm ci
 
-            // Display in Jenkins build history
-            currentBuild.description =
-                "Errors=${errors} Warnings=${warnings}"
+        echo "Running ESLint..."
 
-            if (warnings > 0) {
-                currentBuild.result = 'UNSTABLE'
-            }
+        npx eslint . \
+            -f json \
+            -o eslint-report.json
+    '''
 
-            if (errors > 0) {
-                error("Build failed due to ESLint errors")
-            }
-        }
+    def report = readJSON file: 'eslint-report.json'
+
+    int errors = 0
+    int warnings = 0
+
+    report.each { file ->
+        errors += file.errorCount
+        warnings += file.warningCount
+    }
+
+    echo "======================="
+    echo "ESLint Summary"
+    echo "Errors   : ${errors}"
+    echo "Warnings : ${warnings}"
+    echo "======================="
+
+    if (errors > 0) {
+
+        currentBuild.description =
+            "FAILED | Errors=${errors} Warnings=${warnings}"
+
+        error("Build failed due to ESLint errors")
+
+    } else if (warnings > 0) {
+
+        currentBuild.description =
+            "UNSTABLE | Warnings=${warnings}"
+
+        currentBuild.result = 'UNSTABLE'
+
+    } else {
+
+        currentBuild.description = "CLEAN"
+
     }
 }
