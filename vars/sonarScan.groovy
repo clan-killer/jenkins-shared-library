@@ -73,21 +73,23 @@ def call(Map config = [:]) {
 
     echo "Quality Gate Passed"
 
-    withCredentials([
-        string(
-            credentialsId: 'sonar-token',
-            variable: 'SONAR_TOKEN'
-        )
-    ]) {
+    withSonarQubeEnv('SonarQube') {
 
-        sh """
-            curl -s -u ${SONAR_TOKEN}: \
-            '${config.sonarUrl}/api/measures/component?component=${config.projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density' \
-            -o sonar-${config.projectKey}-summary-raw.json
-        """
+        withCredentials([
+            string(
+                credentialsId: 'sonar-token',
+                variable: 'SONAR_TOKEN'
+            )
+        ]) {
+
+            sh """
+                curl -s \
+                -u "\$SONAR_TOKEN:" \
+                "\$SONAR_HOST_URL/api/measures/component?component=${config.projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density" \
+                -o sonar-${config.projectKey}-summary-raw.json
+            """
+        }
     }
-
-
 
     def sonarData =
         new JsonSlurperClassic()
@@ -139,10 +141,10 @@ def call(Map config = [:]) {
     )
 
     archiveArtifacts(
-        artifacts: '''
+        artifacts: """
             sonar-summary.json,
             sonar-${config.projectKey}-summary-raw.json
-        ''',
+        """,
         allowEmptyArchive: true
     )
 
