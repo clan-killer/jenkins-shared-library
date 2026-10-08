@@ -17,8 +17,6 @@ def call(Map config = [:]) {
             withSonarQubeEnv('SonarQube') {
 
                 sh """
-                    export PATH=/home/virendra-mahajan/.nvm/versions/node/v24.*/bin:\$PATH
-
                     ${scannerHome}/bin/sonar-scanner
                 """
             }
