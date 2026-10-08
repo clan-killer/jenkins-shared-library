@@ -70,9 +70,16 @@ def call(Map config = [:]) {
 
     echo "Quality Gate Passed"
 
+    withCredentials([
+    string(
+        credentialsId: 'sonar-token',
+        variable: 'SONAR_TOKEN'
+    )
+])
     sh """
         curl -s -u ${config.sonarToken}: \
         '${config.sonarUrl}/api/measures/component?component=${config.projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density' \
+        
         -o sonar-summary-raw.json
     """
 
