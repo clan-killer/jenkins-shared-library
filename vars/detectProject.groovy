@@ -1,6 +1,14 @@
 def call() {
 
     if (fileExists('package.json')) {
+
+        def packageJson = readFile('package.json')
+
+        if (packageJson.contains('@nestjs/core')) {
+            echo "Project Type Detected: NESTJS"
+            return 'NESTJS'
+        }
+
         echo "Project Type Detected: NODE"
         return 'NODE'
     }
@@ -27,5 +35,5 @@ def call() {
         return 'GO'
     }
 
-    error('Unsupported project type')
+    error("Unsupported project type")
 }
