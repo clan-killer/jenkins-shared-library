@@ -83,13 +83,7 @@ def call(Map config = [:]) {
         sh """
             curl -s -u ${SONAR_TOKEN}: \
             '${config.sonarUrl}/api/measures/component?component=${config.projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density' \
-            -o sonar-summary-raw.json
-        """
-
-        sh """
-            echo "=== SONAR RAW RESPONSE ==="
-            ls -ltr
-            cat sonar-summary-raw.json || true
+            -o sonar-${config.projectKey}-summary-raw.json
         """
     }
 
@@ -97,7 +91,7 @@ def call(Map config = [:]) {
 
     def sonarData =
         new JsonSlurperClassic()
-            .parse(new File("sonar-summary-raw.json"))
+            .parse(new File("${env.WORKSPACE}/sonar-${config.projectKey}-summary-raw.json"))
 
     def measures = sonarData.component.measures
 
@@ -147,7 +141,7 @@ def call(Map config = [:]) {
     archiveArtifacts(
         artifacts: '''
             sonar-summary.json,
-            sonar-summary-raw.json
+            sonar-${config.projectKey}-summary-raw.json
         ''',
         allowEmptyArchive: true
     )
