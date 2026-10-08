@@ -1,6 +1,8 @@
 def scannerHome = tool 'SonarScanner'
 
-echo "Scanner Home = ${scannerHome}"
+echo "Sonar Scanner Home: ${scannerHome}"
 
-withSonarQubeEnv('SonarQube') {
-    sh "${scannerHome}/bin/sonar-scanner --
+sh """
+    ls -la ${scannerHome}/bin
+    ${scannerHome}/bin/sonar-scanner --version
+"""
