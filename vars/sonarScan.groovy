@@ -88,6 +88,13 @@ def call(Map config = [:]) {
                 "\$SONAR_HOST_URL/api/measures/component?component=${config.projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density" \
                 -o sonar-${config.projectKey}-summary-raw.json
             """
+
+            sh """
+                curl -s \
+                -u "\$SONAR_TOKEN:" \
+                "\$SONAR_HOST_URL/api/issues/search?componentKeys=${config.projectKey}&ps=500" \
+                -o sonar-${config.projectKey}-issues.json
+            """
         }
     }
 
@@ -95,16 +102,61 @@ def call(Map config = [:]) {
         new JsonSlurperClassic()
             .parse(new File("${env.WORKSPACE}/sonar-${config.projectKey}-summary-raw.json"))
 
+    def issuesData =
+        new JsonSlurperClassic()
+            .parse(new File("${env.WORKSPACE}/sonar-${config.projectKey}-issues.json"))
+
     def measures = sonarData.component.measures
+
+    int blocker  = 0
+    int critical = 0
+    int major    = 0
+    int minor    = 0
+    int info     = 0
+
+    issuesData.issues.each { issue ->
+
+        switch(issue.severity) {
+
+            case "BLOCKER":
+                blocker++
+                break
+
+            case "CRITICAL":
+                critical++
+                break
+
+            case "MAJOR":
+                major++
+                break
+
+            case "MINOR":
+                minor++
+                break
+
+            case "INFO":
+                info++
+                break
+        }
+    }
 
     def summary = [
         projectType     : projectType,
+
         bugs            : 0,
         vulnerabilities : 0,
         codeSmells      : 0,
         coverage        : 0,
         duplication     : 0,
-        qualityGate     : "PASSED"
+
+        blocker         : blocker,
+        critical        : critical,
+        major           : major,
+        minor           : minor,
+        info            : info,
+
+        qualityGate     : "PASSED",
+        status          : "SUCCESS"
     ]
 
     measures.each { measure ->
@@ -133,6 +185,17 @@ def call(Map config = [:]) {
         }
     }
 
+    if(summary.blocker > 0 ||
+       summary.critical > 0) {
+
+        summary.status = "FAILED"
+    }
+    else if(summary.major > 0 ||
+            summary.minor > 0) {
+
+        summary.status = "UNSTABLE"
+    }
+
     writeFile(
         file: 'sonar-summary.json',
         text: JsonOutput.prettyPrint(
@@ -143,7 +206,8 @@ def call(Map config = [:]) {
     archiveArtifacts(
         artifacts: """
             sonar-summary.json,
-            sonar-${config.projectKey}-summary-raw.json
+            sonar-${config.projectKey}-summary-raw.json,
+            sonar-${config.projectKey}-issues.json
         """,
         allowEmptyArchive: true
     )
@@ -158,17 +222,40 @@ Project Type    : ${summary.projectType}
 Bugs            : ${summary.bugs}
 Vulnerabilities : ${summary.vulnerabilities}
 Code Smells     : ${summary.codeSmells}
+
 Coverage        : ${summary.coverage}%
 Duplications    : ${summary.duplication}%
 
+------------------------------------
+
+Blocker         : ${summary.blocker}
+Critical        : ${summary.critical}
+Major           : ${summary.major}
+Minor           : ${summary.minor}
+Info            : ${summary.info}
+
 Quality Gate    : ${summary.qualityGate}
+
+Status          : ${summary.status}
 
 ====================================
 """
 
     currentBuild.description =
         (currentBuild.description ?: "") +
-        " | Sonar[B=${summary.bugs},V=${summary.vulnerabilities}]"
+        " | Sonar[BL=${summary.blocker},CR=${summary.critical},MJ=${summary.major}]"
+
+    if(summary.blocker > 0 ||
+       summary.critical > 0) {
+
+        error("SonarQube Blocker/Critical issues found")
+    }
+
+    if(summary.major > 0 ||
+       summary.minor > 0) {
+
+        currentBuild.result = 'UNSTABLE'
+    }
 
     return summary
 }
