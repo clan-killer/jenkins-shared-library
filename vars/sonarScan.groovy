@@ -15,7 +15,6 @@ def call(Map config = [:]) {
             def scannerHome = tool 'SonarScanner'
 
             withSonarQubeEnv('SonarQube') {
-
                 sh """
                     ${scannerHome}/bin/sonar-scanner
                 """
@@ -26,7 +25,6 @@ def call(Map config = [:]) {
         case "MAVEN":
 
             withSonarQubeEnv('SonarQube') {
-
                 sh '''
                     mvn sonar:sonar
                 '''
@@ -37,7 +35,6 @@ def call(Map config = [:]) {
         case "GRADLE":
 
             withSonarQubeEnv('SonarQube') {
-
                 sh '''
                     ./gradlew sonarqube
                 '''
@@ -51,7 +48,6 @@ def call(Map config = [:]) {
             def scannerHome = tool 'SonarScanner'
 
             withSonarQubeEnv('SonarQube') {
-
                 sh """
                     ${scannerHome}/bin/sonar-scanner
                 """
@@ -106,7 +102,7 @@ def call(Map config = [:]) {
             int pageSize = 500
             boolean hasMore = true
 
-            while (hasMore) {
+            while(hasMore) {
 
                 sh """
                     curl -s \
@@ -119,12 +115,11 @@ def call(Map config = [:]) {
                     new JsonSlurperClassic()
                         .parse(new File("${env.WORKSPACE}/sonar-page.json"))
 
-                if (pageData.issues) {
+                if(pageData.issues) {
                     allIssues.addAll(pageData.issues)
                 }
 
                 hasMore = pageData.issues?.size() == pageSize
-
                 page++
             }
         }
@@ -180,19 +175,16 @@ def call(Map config = [:]) {
 
     def summary = [
         projectType     : projectType,
-
         bugs            : 0,
         vulnerabilities : 0,
         codeSmells      : 0,
         coverage        : 0,
         duplication     : 0,
-
         blocker         : blocker,
         critical        : critical,
         major           : major,
         minor           : minor,
         info            : info,
-
         qualityGate     : "PASSED",
         status          : "SUCCESS"
     ]
@@ -223,23 +215,24 @@ def call(Map config = [:]) {
         }
     }
 
-    if (summary.blocker > 0) {
+    if(summary.blocker > 0) {
 
         summary.status = "FAILED"
 
-    } else if (summary.critical > 0) {
+    } else if(summary.critical > 0) {
 
         summary.status = "APPROVAL_REQUIRED"
 
-    } else if (summary.major > 0 ||
-               summary.minor > 0) {
+    } else if(summary.major > 0 ||
+              summary.minor > 0) {
 
         summary.status = "UNSTABLE"
     }
 
-    def issuesReport = new StringBuilder()
+    def fullReport = new StringBuilder()
+    def consoleReport = new StringBuilder()
 
-    issuesReport << """
+    fullReport << """
 =========================================
 SONARQUBE ISSUES REPORT
 Project : ${config.projectKey}
@@ -247,9 +240,19 @@ Project : ${config.projectKey}
 
 """
 
+    consoleReport << """
+=========================================
+SONARQUBE ISSUES REPORT
+Project : ${config.projectKey}
+=========================================
+
+Showing first ${Math.min(allIssues.size(),1000)} of ${allIssues.size()} issues
+
+"""
+
     allIssues.eachWithIndex { issue, index ->
 
-        issuesReport << """
+        def issueText = """
 Issue #${index + 1}
 
 Severity : ${issue.severity}
@@ -264,9 +267,33 @@ Message  : ${issue.message}
 -----------------------------------------
 
 """
+
+        fullReport << issueText
+
+        if(index < 1000) {
+            consoleReport << issueText
+        }
     }
 
-    issuesReport << """
+    if(allIssues.size() > 1000) {
+
+        consoleReport << """
+
+WARNING:
+Output truncated.
+
+Showing first 1000 issues only.
+
+Download artifact:
+
+sonar-${config.projectKey}-issues-report.txt
+
+for complete findings.
+
+"""
+    }
+
+    fullReport << """
 
 =========================================
 SUMMARY
@@ -291,6 +318,23 @@ Status          : ${summary.status}
 =========================================
 """
 
+    consoleReport << """
+
+=========================================
+SUMMARY
+=========================================
+
+Blocker         : ${summary.blocker}
+Critical        : ${summary.critical}
+Major           : ${summary.major}
+Minor           : ${summary.minor}
+Info            : ${summary.info}
+
+Status          : ${summary.status}
+
+=========================================
+"""
+
     writeFile(
         file: "sonar-${config.projectKey}-summary.json",
         text: JsonOutput.prettyPrint(
@@ -300,18 +344,30 @@ Status          : ${summary.status}
 
     writeFile(
         file: "sonar-${config.projectKey}-issues-report.txt",
-        text: issuesReport.toString()
+        text: fullReport.toString()
     )
 
+    echo consoleReport.toString()
+
+    sh '''
+        echo "===== GENERATED SONAR FILES ====="
+        ls -ltr sonar-*
+    '''
+
     archiveArtifacts(
-        artifacts: """
-            sonar-${config.projectKey}-summary.json,
-            sonar-${config.projectKey}-summary-raw.json,
-            sonar-${config.projectKey}-issues.json,
-            sonar-${config.projectKey}-issues-report.txt
-        """,
-        allowEmptyArchive: true
+        artifacts: 'sonar-*',
+        fingerprint: true,
+        allowEmptyArchive: false
     )
+
+    echo """
+Artifacts Generated
+
+✓ sonar-${config.projectKey}-summary.json
+✓ sonar-${config.projectKey}-summary-raw.json
+✓ sonar-${config.projectKey}-issues.json
+✓ sonar-${config.projectKey}-issues-report.txt
+"""
 
     echo """
 ====================================
