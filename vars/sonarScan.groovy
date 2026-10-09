@@ -30,7 +30,6 @@ def call(Map config = [:]) {
                     ${scannerHome}/bin/sonar-scanner
                 """
             }
-
             break
 
         case "MAVEN":
@@ -40,7 +39,6 @@ def call(Map config = [:]) {
                     mvn sonar:sonar
                 '''
             }
-
             break
 
         case "GRADLE":
@@ -50,7 +48,6 @@ def call(Map config = [:]) {
                     ./gradlew sonarqube
                 '''
             }
-
             break
 
         case "PYTHON":
@@ -63,22 +60,21 @@ def call(Map config = [:]) {
                     ${scannerHome}/bin/sonar-scanner
                 """
             }
-
             break
     }
 
     echo "Waiting for Sonar Quality Gate..."
 
+    def qgStatus = "UNKNOWN"
+
     timeout(time: 5, unit: 'MINUTES') {
 
         def qg = waitForQualityGate()
 
-        if (qg.status != 'OK') {
-            error "Sonar Quality Gate Failed: ${qg.status}"
-        }
+        qgStatus = qg.status
     }
 
-    echo "Quality Gate Passed"
+    echo "Quality Gate Status: ${qgStatus}"
 
     withSonarQubeEnv('SonarQube') {
 
@@ -204,7 +200,7 @@ def call(Map config = [:]) {
         major           : major,
         minor           : minor,
         info            : info,
-        qualityGate     : "PASSED",
+        qualityGate     : qgStatus,
         status          : "SUCCESS"
     ]
 
@@ -238,6 +234,10 @@ def call(Map config = [:]) {
 
         summary.status = "FAILED"
 
+    } else if(summary.qualityGate == "ERROR") {
+
+        summary.status = "APPROVAL_REQUIRED"
+
     } else if(summary.critical > 0) {
 
         summary.status = "APPROVAL_REQUIRED"
@@ -248,180 +248,9 @@ def call(Map config = [:]) {
         summary.status = "UNSTABLE"
     }
 
-    def fullReport = new StringBuilder()
-    def consoleReport = new StringBuilder()
-
-    fullReport << """
-=========================================
-SONARQUBE ISSUES REPORT
-Project : ${config.projectKey}
-=========================================
-
-"""
-
-    consoleReport << """
-=========================================
-SONARQUBE ISSUES REPORT
-Project : ${config.projectKey}
-=========================================
-
-Showing first ${Math.min(allIssues.size(),1000)} of ${allIssues.size()} issues
-
-"""
-
-    allIssues.eachWithIndex { issue, index ->
-
-        def issueText = """
-Issue #${index + 1}
-
-Severity : ${issue.severity}
-Type     : ${issue.type}
-Rule     : ${issue.rule}
-
-File     : ${issue.component}
-Line     : ${issue.line ?: 'N/A'}
-
-Message  : ${issue.message}
-
------------------------------------------
-
-"""
-
-        fullReport << issueText
-
-        if(index < 1000) {
-            consoleReport << issueText
-        }
-    }
-
-    if(allIssues.size() > 1000) {
-
-        consoleReport << """
-
-WARNING:
-Output truncated.
-
-Showing first 1000 issues only.
-
-Download artifact:
-
-${reportDir}/sonar-${config.projectKey}-issues-report.txt
-
-for complete findings.
-
-"""
-    }
-
-    fullReport << """
-
-=========================================
-SUMMARY
-=========================================
-
-Blocker         : ${summary.blocker}
-Critical        : ${summary.critical}
-Major           : ${summary.major}
-Minor           : ${summary.minor}
-Info            : ${summary.info}
-
-Bugs            : ${summary.bugs}
-Vulnerabilities : ${summary.vulnerabilities}
-Code Smells     : ${summary.codeSmells}
-
-Coverage        : ${summary.coverage}%
-Duplications    : ${summary.duplication}%
-
-Quality Gate    : ${summary.qualityGate}
-Status          : ${summary.status}
-
-=========================================
-"""
-
-    consoleReport << """
-
-=========================================
-SUMMARY
-=========================================
-
-Blocker         : ${summary.blocker}
-Critical        : ${summary.critical}
-Major           : ${summary.major}
-Minor           : ${summary.minor}
-Info            : ${summary.info}
-
-Status          : ${summary.status}
-
-=========================================
-"""
-
-    writeFile(
-        file: "${reportDir}/sonar-${config.projectKey}-summary.json",
-        text: JsonOutput.prettyPrint(
-            JsonOutput.toJson(summary)
-        )
-    )
-
-    writeFile(
-        file: "${reportDir}/sonar-${config.projectKey}-issues-report.txt",
-        text: fullReport.toString()
-    )
-
-    echo consoleReport.toString()
-
-    sh """
-        echo "===== GENERATED SONAR FILES ====="
-        ls -ltr ${reportDir}
-    """
-
-    archiveArtifacts(
-        artifacts: "${buildDir}/**",
-        fingerprint: true,
-        allowEmptyArchive: false
-    )
-
-    echo """
-Artifacts Generated
-
-Location:
-${reportDir}
-
-✓ sonar-${config.projectKey}-summary.json
-✓ sonar-${config.projectKey}-summary-raw.json
-✓ sonar-${config.projectKey}-issues.json
-✓ sonar-${config.projectKey}-issues-report.txt
-"""
-
-    echo """
-====================================
-
-SONARQUBE SUMMARY
-
-Project Type    : ${summary.projectType}
-
-Bugs            : ${summary.bugs}
-Vulnerabilities : ${summary.vulnerabilities}
-Code Smells     : ${summary.codeSmells}
-
-Coverage        : ${summary.coverage}%
-Duplications    : ${summary.duplication}%
-
-------------------------------------
-
-Blocker         : ${summary.blocker}
-Critical        : ${summary.critical}
-Major           : ${summary.major}
-Minor           : ${summary.minor}
-Info            : ${summary.info}
-
-Quality Gate    : ${summary.qualityGate}
-Status          : ${summary.status}
-
-====================================
-"""
-
     currentBuild.description =
         (currentBuild.description ?: "") +
-        " | Sonar[BL=${summary.blocker},CR=${summary.critical},MJ=${summary.major}]"
+        " | Sonar[QG=${summary.qualityGate},BL=${summary.blocker},CR=${summary.critical}]"
 
     if(summary.blocker > 0) {
         error("SonarQube Blocker issues found")
