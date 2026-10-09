@@ -6,29 +6,23 @@ def call(Map config = [:]) {
     def imageName = config.imageName
     def imageTag  = config.imageTag
 
-    def reportDir = "reports/trivy"
-    def cacheDir  = "/var/lib/jenkins/trivy-cache"
+    def buildDir  = "builds/Build_${env.BUILD_NUMBER}"
+    def reportDir = "${buildDir}/reports/trivy"
 
-    if (!fileExists("reports")) {
+    def cacheDir = "/var/lib/jenkins/trivy-cache"
 
-        echo "Creating reports directory..."
+    if (!fileExists(buildDir)) {
 
-        sh '''
-            mkdir -p reports
-        '''
+        sh """
+            mkdir -p ${buildDir}
+        """
     }
 
     if (!fileExists(reportDir)) {
 
-        echo "Creating Trivy report directory..."
-
         sh """
             mkdir -p ${reportDir}
         """
-    }
-    else {
-
-        echo "Trivy report directory already exists."
     }
 
     def image = "${imageName}:${imageTag}"
@@ -98,22 +92,20 @@ def call(Map config = [:]) {
     }
 
     def summary = [
-        image     : image,
-
-        critical  : critical,
-        high      : high,
-        medium    : medium,
-        low       : low,
-
-        status    : "SUCCESS"
+        image    : image,
+        critical : critical,
+        high     : high,
+        medium   : medium,
+        low      : low,
+        status   : "SUCCESS"
     ]
 
-    if(summary.critical > 0 ||
-       summary.high > 0) {
+    if (summary.critical > 0 ||
+        summary.high > 0) {
 
         summary.status = "APPROVAL_REQUIRED"
-    }
-    else if(summary.medium > 0) {
+
+    } else if (summary.medium > 0) {
 
         summary.status = "UNSTABLE"
     }
@@ -126,7 +118,6 @@ def call(Map config = [:]) {
     )
 
     def fullReport = new StringBuilder()
-
     def consoleReport = new StringBuilder()
 
     fullReport << """
@@ -175,13 +166,13 @@ Title         : ${vuln.Title ?: 'N/A'}
 
         fullReport << vulnText
 
-        if(index < 1000) {
+        if (index < 1000) {
 
             consoleReport << vulnText
         }
     }
 
-    if(vulnerabilities.size() > 1000) {
+    if (vulnerabilities.size() > 1000) {
 
         consoleReport << """
 
@@ -195,7 +186,7 @@ See:
 
 ${reportDir}/trivy-${imageName}-report.txt
 
-for complete report.
+for complete findings.
 
 """
     }
@@ -251,7 +242,7 @@ Status   : ${summary.status}
     """
 
     archiveArtifacts(
-        artifacts: 'reports/trivy/**',
+        artifacts: "${buildDir}/**",
         fingerprint: true,
         allowEmptyArchive: false
     )
@@ -264,14 +255,14 @@ TRIVY SUMMARY
 Image       : ${summary.image}
 
 Critical    : ${summary.critical}
-
 High        : ${summary.high}
-
 Medium      : ${summary.medium}
-
 Low         : ${summary.low}
 
 Status      : ${summary.status}
+
+Reports Location:
+${reportDir}
 
 ====================================
 """
@@ -280,7 +271,7 @@ Status      : ${summary.status}
         (currentBuild.description ?: "") +
         " | Trivy[C=${summary.critical},H=${summary.high}]"
 
-    if(summary.medium > 0) {
+    if (summary.medium > 0) {
 
         currentBuild.result = 'UNSTABLE'
     }

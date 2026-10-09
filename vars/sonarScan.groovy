@@ -3,6 +3,17 @@ import groovy.json.JsonSlurperClassic
 
 def call(Map config = [:]) {
 
+    def buildDir  = "builds/Build_${env.BUILD_NUMBER}"
+    def reportDir = "${buildDir}/reports/sonar"
+
+    if (!fileExists(buildDir)) {
+        sh "mkdir -p ${buildDir}"
+    }
+
+    if (!fileExists(reportDir)) {
+        sh "mkdir -p ${reportDir}"
+    }
+
     def projectType = detectProject()
 
     echo "Running SonarQube scan for ${projectType}"
@@ -82,7 +93,7 @@ def call(Map config = [:]) {
                 curl -s \
                 -u "\$SONAR_TOKEN:" \
                 "\$SONAR_HOST_URL/api/measures/component?component=${config.projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density" \
-                -o sonar-${config.projectKey}-summary-raw.json
+                -o ${reportDir}/sonar-${config.projectKey}-summary-raw.json
             """
         }
     }
@@ -108,12 +119,16 @@ def call(Map config = [:]) {
                     curl -s \
                     -u "\$SONAR_TOKEN:" \
                     "\$SONAR_HOST_URL/api/issues/search?componentKeys=${config.projectKey}&ps=${pageSize}&p=${page}" \
-                    -o sonar-page.json
+                    -o ${reportDir}/sonar-page.json
                 """
 
                 def pageData =
                     new JsonSlurperClassic()
-                        .parse(new File("${env.WORKSPACE}/sonar-page.json"))
+                        .parse(
+                            new File(
+                                "${env.WORKSPACE}/${reportDir}/sonar-page.json"
+                            )
+                        )
 
                 if(pageData.issues) {
                     allIssues.addAll(pageData.issues)
@@ -126,7 +141,7 @@ def call(Map config = [:]) {
     }
 
     writeFile(
-        file: "sonar-${config.projectKey}-issues.json",
+        file: "${reportDir}/sonar-${config.projectKey}-issues.json",
         text: JsonOutput.prettyPrint(
             JsonOutput.toJson([
                 total : allIssues.size(),
@@ -137,7 +152,11 @@ def call(Map config = [:]) {
 
     def sonarData =
         new JsonSlurperClassic()
-            .parse(new File("${env.WORKSPACE}/sonar-${config.projectKey}-summary-raw.json"))
+            .parse(
+                new File(
+                    "${env.WORKSPACE}/${reportDir}/sonar-${config.projectKey}-summary-raw.json"
+                )
+            )
 
     def measures = sonarData.component.measures
 
@@ -286,7 +305,7 @@ Showing first 1000 issues only.
 
 Download artifact:
 
-sonar-${config.projectKey}-issues-report.txt
+${reportDir}/sonar-${config.projectKey}-issues-report.txt
 
 for complete findings.
 
@@ -336,32 +355,35 @@ Status          : ${summary.status}
 """
 
     writeFile(
-        file: "sonar-${config.projectKey}-summary.json",
+        file: "${reportDir}/sonar-${config.projectKey}-summary.json",
         text: JsonOutput.prettyPrint(
             JsonOutput.toJson(summary)
         )
     )
 
     writeFile(
-        file: "sonar-${config.projectKey}-issues-report.txt",
+        file: "${reportDir}/sonar-${config.projectKey}-issues-report.txt",
         text: fullReport.toString()
     )
 
     echo consoleReport.toString()
 
-    sh '''
+    sh """
         echo "===== GENERATED SONAR FILES ====="
-        ls -ltr sonar-*
-    '''
+        ls -ltr ${reportDir}
+    """
 
     archiveArtifacts(
-        artifacts: 'sonar-*',
+        artifacts: "${buildDir}/**",
         fingerprint: true,
         allowEmptyArchive: false
     )
 
     echo """
 Artifacts Generated
+
+Location:
+${reportDir}
 
 ✓ sonar-${config.projectKey}-summary.json
 ✓ sonar-${config.projectKey}-summary-raw.json
