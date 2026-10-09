@@ -17,7 +17,7 @@ def call(Map sonarResult = [:], Map trivyResult = [:]) {
         sonarCritical > 0 ||
 
         "ERROR".equalsIgnoreCase(
-            sonarQualityGate
+       sonarResult?.qualityGate ?: ""
         ) ||
 
         trivyCritical > 0 ||
