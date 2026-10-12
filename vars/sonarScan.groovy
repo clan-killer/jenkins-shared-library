@@ -6,17 +6,27 @@ def call(Map config = [:]) {
     def buildDir  = "builds/Build_${env.BUILD_NUMBER}"
     def reportDir = "${buildDir}/reports/sonar"
 
-    if (!fileExists(buildDir)) {
-        sh "mkdir -p ${buildDir}"
-    }
-
-    if (!fileExists(reportDir)) {
-        sh "mkdir -p ${reportDir}"
-    }
+    sh "mkdir -p ${reportDir}"
 
     def projectType = detectProject()
 
-    echo "Running SonarQube scan for ${projectType}"
+    def projectKey = config.projectKey
+
+    if (!projectKey?.trim()) {
+        error("Sonar projectKey not provided")
+    }
+
+    echo """
+====================================
+
+SONAR SCAN
+
+Project Type : ${projectType}
+
+Project Key  : ${projectKey}
+
+====================================
+"""
 
     switch(projectType) {
 
@@ -26,28 +36,40 @@ def call(Map config = [:]) {
             def scannerHome = tool 'SonarScanner'
 
             withSonarQubeEnv('SonarQube') {
+
                 sh """
-                    ${scannerHome}/bin/sonar-scanner
+                    ${scannerHome}/bin/sonar-scanner \
+                    -Dsonar.projectKey=${projectKey} \
+                    -Dsonar.projectName=${projectKey} \
+                    -Dsonar.sources=. \
+                    -Dsonar.sourceEncoding=UTF-8
                 """
             }
+
             break
 
         case "MAVEN":
 
             withSonarQubeEnv('SonarQube') {
-                sh '''
-                    mvn sonar:sonar
-                '''
+
+                sh """
+                    mvn sonar:sonar \
+                    -Dsonar.projectKey=${projectKey}
+                """
             }
+
             break
 
         case "GRADLE":
 
             withSonarQubeEnv('SonarQube') {
-                sh '''
-                    ./gradlew sonarqube
-                '''
+
+                sh """
+                    ./gradlew sonarqube \
+                    -Dsonar.projectKey=${projectKey}
+                """
             }
+
             break
 
         case "PYTHON":
@@ -56,10 +78,16 @@ def call(Map config = [:]) {
             def scannerHome = tool 'SonarScanner'
 
             withSonarQubeEnv('SonarQube') {
+
                 sh """
-                    ${scannerHome}/bin/sonar-scanner
+                    ${scannerHome}/bin/sonar-scanner \
+                    -Dsonar.projectKey=${projectKey} \
+                    -Dsonar.projectName=${projectKey} \
+                    -Dsonar.sources=. \
+                    -Dsonar.sourceEncoding=UTF-8
                 """
             }
+
             break
     }
 
@@ -88,8 +116,8 @@ def call(Map config = [:]) {
             sh """
                 curl -s \
                 -u "\$SONAR_TOKEN:" \
-                "\$SONAR_HOST_URL/api/measures/component?component=${config.projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density" \
-                -o ${reportDir}/sonar-${config.projectKey}-summary-raw.json
+                "\$SONAR_HOST_URL/api/measures/component?component=${projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density" \
+                -o ${reportDir}/sonar-${projectKey}-summary-raw.json
             """
         }
     }
@@ -109,35 +137,36 @@ def call(Map config = [:]) {
             int pageSize = 500
             boolean hasMore = true
 
-            while(hasMore) {
+            while (hasMore) {
 
                 sh """
                     curl -s \
                     -u "\$SONAR_TOKEN:" \
-                    "\$SONAR_HOST_URL/api/issues/search?componentKeys=${config.projectKey}&ps=${pageSize}&p=${page}" \
+                    "\$SONAR_HOST_URL/api/issues/search?componentKeys=${projectKey}&ps=${pageSize}&p=${page}" \
                     -o ${reportDir}/sonar-page.json
                 """
 
                 def pageData =
-                    new JsonSlurperClassic()
-                        .parse(
-                            new File(
-                                "${env.WORKSPACE}/${reportDir}/sonar-page.json"
-                            )
+                    new JsonSlurperClassic().parse(
+                        new File(
+                            "${env.WORKSPACE}/${reportDir}/sonar-page.json"
                         )
+                    )
 
-                if(pageData.issues) {
+                if (pageData.issues) {
                     allIssues.addAll(pageData.issues)
                 }
 
-                hasMore = pageData.issues?.size() == pageSize
+                hasMore =
+                    pageData.issues?.size() == pageSize
+
                 page++
             }
         }
     }
 
     writeFile(
-        file: "${reportDir}/sonar-${config.projectKey}-issues.json",
+        file: "${reportDir}/sonar-${projectKey}-issues.json",
         text: JsonOutput.prettyPrint(
             JsonOutput.toJson([
                 total : allIssues.size(),
@@ -147,12 +176,11 @@ def call(Map config = [:]) {
     )
 
     def sonarData =
-        new JsonSlurperClassic()
-            .parse(
-                new File(
-                    "${env.WORKSPACE}/${reportDir}/sonar-${config.projectKey}-summary-raw.json"
-                )
+        new JsonSlurperClassic().parse(
+            new File(
+                "${env.WORKSPACE}/${reportDir}/sonar-${projectKey}-summary-raw.json"
             )
+        )
 
     def measures = sonarData.component.measures
 
@@ -230,37 +258,80 @@ def call(Map config = [:]) {
         }
     }
 
-    if(summary.blocker > 0) {
-
-        summary.status = "FAILED"
-
-    } else if(summary.qualityGate == "ERROR") {
+    if (summary.blocker > 0) {
 
         summary.status = "APPROVAL_REQUIRED"
 
-    } else if(summary.critical > 0) {
+    } else if (summary.qualityGate == "ERROR") {
 
         summary.status = "APPROVAL_REQUIRED"
 
-    } else if(summary.major > 0 ||
-              summary.minor > 0) {
+    } else if (summary.critical > 0) {
 
-        summary.status = "UNSTABLE"
+        summary.status = "APPROVAL_REQUIRED"
+
+    } else if (summary.major > 0 ||
+               summary.minor > 0) {
+
+        summary.status = "WARNING"
     }
+
+    writeFile(
+        file: "${reportDir}/sonar-summary.json",
+        text: JsonOutput.prettyPrint(
+            JsonOutput.toJson(summary)
+        )
+    )
+
+    archiveArtifacts(
+        artifacts: "${reportDir}/**",
+        fingerprint: true,
+        allowEmptyArchive: true
+    )
 
     currentBuild.description =
         (currentBuild.description ?: "") +
         " | Sonar[QG=${summary.qualityGate},BL=${summary.blocker},CR=${summary.critical}]"
 
-    if(summary.blocker > 0) {
-        error("SonarQube Blocker issues found")
-    }
+    echo """
+===================================================
 
-    if(summary.major > 0 ||
-       summary.minor > 0) {
+SONAR SUMMARY
 
-        currentBuild.result = 'UNSTABLE'
-    }
+Quality Gate : ${summary.qualityGate}
+
+Bugs         : ${summary.bugs}
+
+Vulnerabilities : ${summary.vulnerabilities}
+
+Code Smells  : ${summary.codeSmells}
+
+Coverage     : ${summary.coverage}
+
+Duplication  : ${summary.duplication}
+
+---------------------------------------------------
+
+Blocker      : ${summary.blocker}
+
+Critical     : ${summary.critical}
+
+Major        : ${summary.major}
+
+Minor        : ${summary.minor}
+
+Info         : ${summary.info}
+
+---------------------------------------------------
+
+Status       : ${summary.status}
+
+Reports
+
+${reportDir}
+
+===================================================
+"""
 
     return summary
 }
