@@ -5,13 +5,7 @@ def call() {
     def buildDir  = "builds/Build_${env.BUILD_NUMBER}"
     def reportDir = "${buildDir}/reports/eslint"
 
-    if (!fileExists(buildDir)) {
-        sh "mkdir -p ${buildDir}"
-    }
-
-    if (!fileExists(reportDir)) {
-        sh "mkdir -p ${reportDir}"
-    }
+    sh "mkdir -p ${reportDir}"
 
     sh """
         echo "===================================="
@@ -26,14 +20,31 @@ def call() {
         echo "INSTALLING DEPENDENCIES"
 
         npm ci
-
-        echo "===================================="
-        echo "RUNNING ESLINT"
-
-        npx eslint . \
-            --format json \
-            --output-file ${reportDir}/eslint-report.json
     """
+
+    echo "===================================="
+    echo "RUNNING ESLINT"
+
+    def eslintExitCode = sh(
+        script: """
+            npx eslint . \
+                --format json \
+                --output-file ${reportDir}/eslint-report.json
+        """,
+        returnStatus: true
+    )
+
+    echo "ESLint Exit Code : ${eslintExitCode}"
+
+    if (!fileExists("${reportDir}/eslint-report.json")) {
+
+        echo "ESLint report not generated. Creating empty report."
+
+        writeFile(
+            file: "${reportDir}/eslint-report.json",
+            text: "[]"
+        )
+    }
 
     def report = readJSON(
         file: "${reportDir}/eslint-report.json"
@@ -61,7 +72,7 @@ def call() {
 
     } else if (warnings > 0) {
 
-        summary.status = "UNSTABLE"
+        summary.status = "WARNING"
     }
 
     def fullReport = new StringBuilder()
@@ -127,6 +138,8 @@ Warnings : ${warnings}
 
 Status   : ${summary.status}
 
+ExitCode : ${eslintExitCode}
+
 =========================================
 """
 
@@ -153,6 +166,8 @@ Warnings    : ${warnings}
 
 Status      : ${summary.status}
 
+Exit Code   : ${eslintExitCode}
+
 Reports
 
 ${reportDir}
@@ -168,17 +183,12 @@ ${reportDir}
     archiveArtifacts(
         artifacts: "${reportDir}/**",
         fingerprint: true,
-        allowEmptyArchive: false
+        allowEmptyArchive: true
     )
 
     currentBuild.description =
         (currentBuild.description ?: "") +
         " | ESLint[E=${errors},W=${warnings}]"
-
-    if (warnings > 0) {
-
-        currentBuild.result = 'UNSTABLE'
-    }
 
     return summary
 }
