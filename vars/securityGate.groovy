@@ -1,4 +1,14 @@
-def call(Map sonarResult = [:], Map trivyResult = [:]) {
+def call(
+    Map eslintResult = [:],
+    Map sonarResult = [:],
+    Map trivyResult = [:]
+) {
+
+    int eslintErrors =
+        eslintResult?.errors ?: 0
+
+    int eslintWarnings =
+        eslintResult?.warnings ?: 0
 
     int sonarCritical =
         sonarResult?.critical ?: 0
@@ -14,10 +24,12 @@ def call(Map sonarResult = [:], Map trivyResult = [:]) {
 
     boolean approvalRequired =
 
+        eslintErrors > 0 ||
+
         sonarCritical > 0 ||
 
         "ERROR".equalsIgnoreCase(
-       sonarResult?.qualityGate ?: ""
+            sonarQualityGate
         ) ||
 
         trivyCritical > 0 ||
@@ -33,10 +45,25 @@ SECURITY GATE
 
 No approval required.
 
+---------------------------------------------------
+
+ESLINT
+
+Status       : ${eslintResult?.status ?: 'SUCCESS'}
+
+Errors       : ${eslintErrors}
+
+Warnings     : ${eslintWarnings}
+
+---------------------------------------------------
+
 SONAR
 
 Status       : ${sonarResult?.status ?: 'SUCCESS'}
+
 Quality Gate : ${sonarQualityGate}
+
+---------------------------------------------------
 
 TRIVY
 
@@ -64,6 +91,16 @@ Build       : ${env.BUILD_NUMBER}
 Project     : ${env.APP_NAME}
 
 Image       : ${env.IMAGE_NAME}:${env.BUILD_NUMBER}
+
+---------------------------------------------------
+
+ESLINT
+
+Status       : ${eslintResult?.status ?: 'N/A'}
+
+Errors       : ${eslintErrors}
+
+Warnings     : ${eslintWarnings}
 
 ---------------------------------------------------
 
@@ -101,6 +138,10 @@ Source
 
 builds/Build_${env.BUILD_NUMBER}/source/
 
+ESLint Reports
+
+builds/Build_${env.BUILD_NUMBER}/reports/eslint/
+
 Sonar Reports
 
 builds/Build_${env.BUILD_NUMBER}/reports/sonar/
@@ -111,11 +152,13 @@ builds/Build_${env.BUILD_NUMBER}/reports/trivy/
 
 ---------------------------------------------------
 
-Approval Reasons
+APPROVAL REASONS
+
+ESLint Errors  : ${eslintErrors}
 
 Sonar Critical : ${sonarCritical}
 
-Sonar QG Error : ${sonarQualityGate == 'ERROR'}
+Sonar QG Error : ${"ERROR".equalsIgnoreCase(sonarQualityGate)}
 
 Trivy Critical : ${trivyCritical}
 
