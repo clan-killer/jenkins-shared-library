@@ -108,7 +108,7 @@ Project Key  : ${projectKey}
 
         withCredentials([
             string(
-                credentialsId: 'sonar-token',
+                credentialsId: 'sonar-merchant-token',
                 variable: 'SONAR_TOKEN'
             )
         ]) {
