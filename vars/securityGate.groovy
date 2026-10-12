@@ -22,6 +22,35 @@ def call(
     String sonarQualityGate =
         sonarResult?.qualityGate ?: "UNKNOWN"
 
+    int riskScore =
+
+        (eslintErrors * 2) +
+
+        (sonarCritical * 5) +
+
+        (trivyCritical * 10) +
+
+        (trivyHigh * 3)
+
+    if ("ERROR".equalsIgnoreCase(sonarQualityGate)) {
+        riskScore += 5
+    }
+
+    String riskLevel = "LOW"
+
+    if (riskScore >= 25) {
+
+        riskLevel = "CRITICAL"
+
+    } else if (riskScore >= 15) {
+
+        riskLevel = "HIGH"
+
+    } else if (riskScore >= 5) {
+
+        riskLevel = "MEDIUM"
+    }
+
     boolean approvalRequired =
 
         eslintErrors > 0 ||
@@ -44,6 +73,14 @@ def call(
 SECURITY GATE
 
 No approval required.
+
+---------------------------------------------------
+
+RISK ASSESSMENT
+
+Risk Score   : ${riskScore}
+
+Risk Level   : ${riskLevel}
 
 ---------------------------------------------------
 
@@ -72,14 +109,20 @@ Status       : ${trivyResult?.status ?: 'SUCCESS'}
 ===================================================
 """
 
-        return true
+        return [
+            approvalRequired : false,
+            approved         : true,
+            riskScore        : riskScore,
+            riskLevel        : riskLevel,
+            approvedBy       : "AUTO"
+        ]
     }
 
     try {
 
         timeout(time: 60, unit: 'MINUTES') {
 
-            input(
+            def approver = input(
                 id: 'SecurityApproval',
                 message: """
 ===================================================
@@ -91,6 +134,14 @@ Build       : ${env.BUILD_NUMBER}
 Project     : ${env.APP_NAME}
 
 Image       : ${env.IMAGE_NAME}:${env.BUILD_NUMBER}
+
+---------------------------------------------------
+
+RISK ASSESSMENT
+
+Risk Score   : ${riskScore}
+
+Risk Level   : ${riskLevel}
 
 ---------------------------------------------------
 
@@ -154,15 +205,15 @@ builds/Build_${env.BUILD_NUMBER}/reports/trivy/
 
 APPROVAL REASONS
 
-ESLint Errors  : ${eslintErrors}
+${eslintErrors > 0 ? '✓ ESLint Errors Found' : ''}
 
-Sonar Critical : ${sonarCritical}
+${sonarCritical > 0 ? '✓ Sonar Critical Issues Found' : ''}
 
-Sonar QG Error : ${"ERROR".equalsIgnoreCase(sonarQualityGate)}
+${"ERROR".equalsIgnoreCase(sonarQualityGate) ? '✓ Sonar Quality Gate Failed' : ''}
 
-Trivy Critical : ${trivyCritical}
+${trivyCritical > 0 ? '✓ Trivy Critical Vulnerabilities Found' : ''}
 
-Trivy High     : ${trivyHigh}
+${trivyHigh > 0 ? '✓ Trivy High Vulnerabilities Found' : ''}
 
 ---------------------------------------------------
 
@@ -176,21 +227,34 @@ Approve = Continue
 
 ===================================================
 """,
-                ok: 'Approve'
+                ok: 'Approve',
+                submitterParameter: 'APPROVER'
             )
-        }
 
-        echo """
+            echo """
 ===================================================
 
 SECURITY APPROVAL GRANTED
 
-Build : ${env.BUILD_NUMBER}
+Build       : ${env.BUILD_NUMBER}
+
+Approved By : ${approver}
+
+Risk Score  : ${riskScore}
+
+Risk Level  : ${riskLevel}
 
 ===================================================
 """
 
-        return true
+            return [
+                approvalRequired : true,
+                approved         : true,
+                approvedBy       : approver,
+                riskScore        : riskScore,
+                riskLevel        : riskLevel
+            ]
+        }
 
     } catch (Exception ex) {
 
@@ -206,6 +270,10 @@ Reason :
 
 Approval was rejected or not received
 within 60 minutes.
+
+Risk Score : ${riskScore}
+
+Risk Level : ${riskLevel}
 
 ===================================================
 """
