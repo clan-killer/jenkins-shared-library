@@ -12,6 +12,9 @@ def call(Map config = [:]) {
 
     def projectKey = config.projectKey
 
+    def sonarCredentialId =
+        config.credentialsId ?: env.SONAR_CRED_ID ?: 'sonar-token'
+
     if (!projectKey?.trim()) {
         error("Sonar projectKey not provided")
     }
@@ -25,6 +28,8 @@ Project Type : ${projectType}
 
 Project Key  : ${projectKey}
 
+Credential   : ${sonarCredentialId}
+
 ====================================
 """
 
@@ -35,39 +40,66 @@ Project Key  : ${projectKey}
 
             def scannerHome = tool 'SonarScanner'
 
-            withSonarQubeEnv('SonarQube') {
+            withCredentials([
+                string(
+                    credentialsId: sonarCredentialId,
+                    variable: 'SONAR_TOKEN'
+                )
+            ]) {
 
-                sh """
-                    ${scannerHome}/bin/sonar-scanner \
-                    -Dsonar.projectKey=${projectKey} \
-                    -Dsonar.projectName=${projectKey} \
-                    -Dsonar.sources=. \
-                    -Dsonar.sourceEncoding=UTF-8
-                """
+                withSonarQubeEnv('SonarQube') {
+
+                    sh """
+                        ${scannerHome}/bin/sonar-scanner \
+                        -Dsonar.projectKey=${projectKey} \
+                        -Dsonar.projectName=${projectKey} \
+                        -Dsonar.sources=. \
+                        -Dsonar.sourceEncoding=UTF-8 \
+                        -Dsonar.token=\$SONAR_TOKEN
+                    """
+                }
             }
 
             break
 
         case "MAVEN":
 
-            withSonarQubeEnv('SonarQube') {
+            withCredentials([
+                string(
+                    credentialsId: sonarCredentialId,
+                    variable: 'SONAR_TOKEN'
+                )
+            ]) {
 
-                sh """
-                    mvn sonar:sonar \
-                    -Dsonar.projectKey=${projectKey}
-                """
+                withSonarQubeEnv('SonarQube') {
+
+                    sh """
+                        mvn sonar:sonar \
+                        -Dsonar.projectKey=${projectKey} \
+                        -Dsonar.token=\$SONAR_TOKEN
+                    """
+                }
             }
 
             break
 
         case "GRADLE":
 
-            withSonarQubeEnv('SonarQube') {
+            withCredentials([
+                string(
+                    credentialsId: sonarCredentialId,
+                    variable: 'SONAR_TOKEN'
+                )
+            ]) {
 
-                sh """
-                    ./gradlew sonarqube \
-                    -Dsonar.projectKey=${projectKey}
-                """
+                withSonarQubeEnv('SonarQube') {
+
+                    sh """
+                        ./gradlew sonarqube \
+                        -Dsonar.projectKey=${projectKey} \
+                        -Dsonar.token=\$SONAR_TOKEN
+                    """
+                }
             }
 
             break
@@ -77,15 +109,24 @@ Project Key  : ${projectKey}
 
             def scannerHome = tool 'SonarScanner'
 
-            withSonarQubeEnv('SonarQube') {
+            withCredentials([
+                string(
+                    credentialsId: sonarCredentialId,
+                    variable: 'SONAR_TOKEN'
+                )
+            ]) {
 
-                sh """
-                    ${scannerHome}/bin/sonar-scanner \
-                    -Dsonar.projectKey=${projectKey} \
-                    -Dsonar.projectName=${projectKey} \
-                    -Dsonar.sources=. \
-                    -Dsonar.sourceEncoding=UTF-8
-                """
+                withSonarQubeEnv('SonarQube') {
+
+                    sh """
+                        ${scannerHome}/bin/sonar-scanner \
+                        -Dsonar.projectKey=${projectKey} \
+                        -Dsonar.projectName=${projectKey} \
+                        -Dsonar.sources=. \
+                        -Dsonar.sourceEncoding=UTF-8 \
+                        -Dsonar.token=\$SONAR_TOKEN
+                    """
+                }
             }
 
             break
@@ -108,7 +149,7 @@ Project Key  : ${projectKey}
 
         withCredentials([
             string(
-                credentialsId: 'sonar-merchant-token',
+                credentialsId: sonarCredentialId,
                 variable: 'SONAR_TOKEN'
             )
         ]) {
@@ -128,7 +169,7 @@ Project Key  : ${projectKey}
 
         withCredentials([
             string(
-                credentialsId: 'sonar-token',
+                credentialsId: sonarCredentialId,
                 variable: 'SONAR_TOKEN'
             )
         ]) {
@@ -157,9 +198,7 @@ Project Key  : ${projectKey}
                     allIssues.addAll(pageData.issues)
                 }
 
-                hasMore =
-                    pageData.issues?.size() == pageSize
-
+                hasMore = pageData.issues?.size() == pageSize
                 page++
             }
         }
@@ -182,7 +221,7 @@ Project Key  : ${projectKey}
             )
         )
 
-    def measures = sonarData.component.measures
+    def measures = sonarData?.component?.measures ?: []
 
     int blocker  = 0
     int critical = 0
@@ -300,29 +339,11 @@ SONAR SUMMARY
 
 Quality Gate : ${summary.qualityGate}
 
-Bugs         : ${summary.bugs}
-
-Vulnerabilities : ${summary.vulnerabilities}
-
-Code Smells  : ${summary.codeSmells}
-
-Coverage     : ${summary.coverage}
-
-Duplication  : ${summary.duplication}
-
----------------------------------------------------
-
 Blocker      : ${summary.blocker}
-
 Critical     : ${summary.critical}
-
 Major        : ${summary.major}
-
 Minor        : ${summary.minor}
-
 Info         : ${summary.info}
-
----------------------------------------------------
 
 Status       : ${summary.status}
 
