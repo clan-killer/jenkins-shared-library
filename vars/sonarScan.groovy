@@ -33,6 +33,54 @@ Credential   : ${sonarCredentialId}
 ====================================
 """
 
+echo "Verifying SonarQube Connectivity..."
+
+withSonarQubeEnv('SonarQube') {
+
+    withCredentials([
+        string(
+            credentialsId: sonarCredentialId,
+            variable: 'SONAR_TOKEN'
+        )
+    ]) {
+
+        sh '''
+            echo "===================================="
+            echo "SONAR CONNECTIVITY TEST"
+            echo "===================================="
+
+            echo "Sonar URL:"
+            echo "$SONAR_HOST_URL"
+
+            echo ""
+            echo "Checking Sonar Status..."
+
+            curl -s \
+                "$SONAR_HOST_URL/api/system/status"
+
+            echo ""
+            echo ""
+            echo "Checking Token..."
+
+            curl -s \
+                -u "$SONAR_TOKEN:" \
+                "$SONAR_HOST_URL/api/authentication/validate"
+
+            echo ""
+            echo ""
+            echo "Checking Project..."
+
+            curl -s \
+                -u "$SONAR_TOKEN:" \
+                "$SONAR_HOST_URL/api/projects/search?projects=${projectKey}"
+
+            echo ""
+            echo ""
+            echo "===================================="
+        '''
+    }
+}
+
     switch(projectType) {
 
         case "NODE":
