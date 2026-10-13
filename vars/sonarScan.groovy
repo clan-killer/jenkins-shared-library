@@ -44,40 +44,52 @@ withSonarQubeEnv('SonarQube') {
         )
     ]) {
 
-        sh '''
-            echo "===================================="
-            echo "SONAR CONNECTIVITY TEST"
-            echo "===================================="
+        echo """
+====================================
 
-            echo "Sonar URL:"
-            echo "$SONAR_HOST_URL"
+SONAR CONNECTIVITY TEST
+
+Project Key : ${projectKey}
+
+====================================
+"""
+
+withSonarQubeEnv('SonarQube') {
+
+    withCredentials([
+        string(
+            credentialsId: sonarCredentialId,
+            variable: 'SONAR_TOKEN'
+        )
+    ]) {
+
+        sh """
+            echo "SONAR_HOST_URL=\$SONAR_HOST_URL"
 
             echo ""
             echo "Checking Sonar Status..."
 
             curl -s \
-                "$SONAR_HOST_URL/api/system/status"
+                "\$SONAR_HOST_URL/api/system/status"
 
             echo ""
             echo ""
             echo "Checking Token..."
 
             curl -s \
-                -u "$SONAR_TOKEN:" \
-                "$SONAR_HOST_URL/api/authentication/validate"
+                -u "\$SONAR_TOKEN:" \
+                "\$SONAR_HOST_URL/api/authentication/validate"
 
             echo ""
             echo ""
-            echo "Checking Project..."
+            echo "PROJECT_KEY=${projectKey}"
 
             curl -s \
-                -u "$SONAR_TOKEN:" \
-                "$SONAR_HOST_URL/api/projects/search?projects=${projectKey}"
+                -u "\$SONAR_TOKEN:" \
+                "\$SONAR_HOST_URL/api/projects/search?projects=${projectKey}"
 
             echo ""
-            echo ""
-            echo "===================================="
-        '''
+        """
     }
 }
 
