@@ -33,65 +33,53 @@ Credential   : ${sonarCredentialId}
 ====================================
 """
 
-echo "Verifying SonarQube Connectivity..."
+    echo "Verifying SonarQube Connectivity..."
 
-withSonarQubeEnv('SonarQube') {
+    withSonarQubeEnv('SonarQube') {
 
-    withCredentials([
-        string(
-            credentialsId: sonarCredentialId,
-            variable: 'SONAR_TOKEN'
-        )
-    ]) {
+        withCredentials([
+            string(
+                credentialsId: sonarCredentialId,
+                variable: 'SONAR_TOKEN'
+            )
+        ]) {
 
-        echo """
-====================================
+            sh """
+                echo "===================================="
+                echo "SONAR CONNECTIVITY TEST"
+                echo "===================================="
 
-SONAR CONNECTIVITY TEST
+                echo "SONAR_HOST_URL=\$SONAR_HOST_URL"
+                echo "PROJECT_KEY=${projectKey}"
 
-Project Key : ${projectKey}
+                echo ""
+                echo "Checking Sonar Status..."
 
-====================================
-"""
+                curl -s \
+                    "\$SONAR_HOST_URL/api/system/status"
 
-withSonarQubeEnv('SonarQube') {
+                echo ""
+                echo ""
+                echo "Checking Token..."
 
-    withCredentials([
-        string(
-            credentialsId: sonarCredentialId,
-            variable: 'SONAR_TOKEN'
-        )
-    ]) {
+                curl -s \
+                    -u "\$SONAR_TOKEN:" \
+                    "\$SONAR_HOST_URL/api/authentication/validate"
 
-        sh """
-            echo "SONAR_HOST_URL=\$SONAR_HOST_URL"
+                echo ""
+                echo ""
+                echo "Checking Project..."
 
-            echo ""
-            echo "Checking Sonar Status..."
+                curl -s \
+                    -u "\$SONAR_TOKEN:" \
+                    "\$SONAR_HOST_URL/api/projects/search?projects=${projectKey}"
 
-            curl -s \
-                "\$SONAR_HOST_URL/api/system/status"
-
-            echo ""
-            echo ""
-            echo "Checking Token..."
-
-            curl -s \
-                -u "\$SONAR_TOKEN:" \
-                "\$SONAR_HOST_URL/api/authentication/validate"
-
-            echo ""
-            echo ""
-            echo "PROJECT_KEY=${projectKey}"
-
-            curl -s \
-                -u "\$SONAR_TOKEN:" \
-                "\$SONAR_HOST_URL/api/projects/search?projects=${projectKey}"
-
-            echo ""
-        """
+                echo ""
+                echo ""
+                echo "===================================="
+            """
+        }
     }
-}
 
     switch(projectType) {
 
@@ -190,17 +178,33 @@ withSonarQubeEnv('SonarQube') {
             }
 
             break
+
+        default:
+
+            error("Unsupported project type: ${projectType}")
     }
 
-    echo "Waiting for Sonar Quality Gate..."
+    echo """
+====================================
+
+WAITING FOR QUALITY GATE
+
+Project Key : ${projectKey}
+
+====================================
+"""
 
     def qgStatus = "UNKNOWN"
 
     timeout(time: 5, unit: 'MINUTES') {
 
+        echo "Quality Gate monitoring started..."
+
         def qg = waitForQualityGate()
 
         qgStatus = qg.status
+
+        echo "Quality Gate response received..."
     }
 
     echo "Quality Gate Status: ${qgStatus}"
@@ -247,12 +251,11 @@ withSonarQubeEnv('SonarQube') {
                     -o ${reportDir}/sonar-page.json
                 """
 
-                def pageData =
-                    new JsonSlurperClassic().parse(
-                        new File(
-                            "${env.WORKSPACE}/${reportDir}/sonar-page.json"
-                        )
+                def pageData = new JsonSlurperClassic().parse(
+                    new File(
+                        "${env.WORKSPACE}/${reportDir}/sonar-page.json"
                     )
+                )
 
                 if (pageData.issues) {
                     allIssues.addAll(pageData.issues)
@@ -274,12 +277,11 @@ withSonarQubeEnv('SonarQube') {
         )
     )
 
-    def sonarData =
-        new JsonSlurperClassic().parse(
-            new File(
-                "${env.WORKSPACE}/${reportDir}/sonar-${projectKey}-summary-raw.json"
-            )
+    def sonarData = new JsonSlurperClassic().parse(
+        new File(
+            "${env.WORKSPACE}/${reportDir}/sonar-${projectKey}-summary-raw.json"
         )
+    )
 
     def measures = sonarData?.component?.measures ?: []
 
@@ -359,9 +361,9 @@ withSonarQubeEnv('SonarQube') {
 
     if (summary.blocker > 0) {
 
-        summary.status = "APPROVAL_REQUIRED"
+        summary.status = "FAILED"
 
-    } else if (summary.qualityGate == "ERROR") {
+    } else if ("ERROR".equalsIgnoreCase(summary.qualityGate)) {
 
         summary.status = "APPROVAL_REQUIRED"
 
@@ -413,6 +415,10 @@ ${reportDir}
 
 ===================================================
 """
+
+    if (summary.blocker > 0) {
+        error("SonarQube Blocker issues found")
+    }
 
     return summary
 }
