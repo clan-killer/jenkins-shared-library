@@ -7,32 +7,38 @@ def call() {
 
     sh "mkdir -p ${reportDir}"
 
-    try {
-
-        sh """
-            echo "===================================="
-            echo "NODE VERSION"
-            node -v
-
-            echo "===================================="
-            echo "NPM VERSION"
-            npm -v
-
-            echo "===================================="
-            echo "INSTALLING DEPENDENCIES"
-
-            npm ci
-        """
-
-        echo """
+    echo """
 ====================================
-
-RUNNING ESLINT
-
+NODE VERSION
 ====================================
 """
 
-        sh """
+    sh "node -v"
+
+    echo """
+====================================
+NPM VERSION
+====================================
+"""
+
+    sh "npm -v"
+
+    echo """
+====================================
+INSTALLING DEPENDENCIES
+====================================
+"""
+
+    sh "npm ci"
+
+    echo """
+====================================
+RUNNING ESLINT
+====================================
+"""
+
+    def eslintExitCode = sh(
+        script: """
             export NODE_OPTIONS="--max-old-space-size=4096"
 
             npx eslint . \
@@ -43,62 +49,135 @@ RUNNING ESLINT
                 --ignore-pattern coverage \
                 --format json \
                 --output-file ${reportDir}/eslint-report.json
-        """
+        """,
+        returnStatus: true
+    )
 
-        if (!fileExists("${reportDir}/eslint-report.json")) {
+    echo "ESLint Exit Code : ${eslintExitCode}"
 
-            error("""
+    if (!fileExists("${reportDir}/eslint-report.json")) {
+
+        currentBuild.result = "FAILURE"
+
+        error("""
 ====================================
 
-ESLINT REPORT NOT GENERATED
+ESLINT EXECUTION FAILED
 
-Expected Report:
+Report file was not generated.
+
+Expected:
 
 ${reportDir}/eslint-report.json
 
-Possible Causes:
+Common Causes:
 
-- ESLint execution failed
-- Invalid ESLint configuration
-- Missing ESLint plugins
-- Workspace permission issues
+- ESLint configuration error
+- Node.js Out Of Memory
+- Missing ESLint plugin
+- Missing parser
+- Invalid package installation
 
 ====================================
 """)
-        }
+    }
 
-        def report = readJSON(
-            file: "${reportDir}/eslint-report.json"
-        )
+    def report = readJSON(
+        file: "${reportDir}/eslint-report.json"
+    )
 
-        int errors = 0
-        int warnings = 0
+    int errors = 0
+    int warnings = 0
+
+    report.each { file ->
+
+        errors += file.errorCount ?: 0
+        warnings += file.warningCount ?: 0
+    }
+
+    if (eslintExitCode != 0) {
+
+        echo """
+====================================
+ESLINT FINDINGS (TOP RESULTS)
+====================================
+"""
+
+        int displayedFiles = 0
 
         report.each { file ->
 
-            errors += file.errorCount ?: 0
-            warnings += file.warningCount ?: 0
+            if (displayedFiles >= 20) {
+                return
+            }
+
+            if (file.messages?.size() > 0) {
+
+                echo """
+------------------------------------
+FILE
+${file.filePath}
+------------------------------------
+"""
+
+                int displayedMessages = 0
+
+                file.messages.each { msg ->
+
+                    if (displayedMessages >= 10) {
+                        return
+                    }
+
+                    echo """
+Line      : ${msg.line ?: 'N/A'}
+Column    : ${msg.column ?: 'N/A'}
+Severity  : ${msg.severity == 2 ? 'ERROR' : 'WARNING'}
+Rule      : ${msg.ruleId ?: 'N/A'}
+Message   : ${msg.message ?: 'N/A'}
+------------------------------------
+"""
+
+                    displayedMessages++
+                }
+
+                displayedFiles++
+            }
         }
 
-        def summary = [
-            tool     : "ESLint",
-            errors   : errors,
-            warnings : warnings,
-            status   : "SUCCESS"
-        ]
+        echo """
+====================================
 
-        if (errors > 0) {
+ESLINT VALIDATION FAILED
 
-            summary.status = "APPROVAL_REQUIRED"
+Total Errors   : ${errors}
+Total Warnings : ${warnings}
 
-        } else if (warnings > 0) {
+See full report:
+${reportDir}/eslint-findings.txt
 
-            summary.status = "WARNING"
-        }
+====================================
+"""
+    }
 
-        def fullReport = new StringBuilder()
+    def summary = [
+        tool     : "ESLint",
+        errors   : errors,
+        warnings : warnings,
+        status   : "SUCCESS"
+    ]
 
-        fullReport << """
+    if (errors > 0) {
+
+        summary.status = "APPROVAL_REQUIRED"
+
+    } else if (warnings > 0) {
+
+        summary.status = "WARNING"
+    }
+
+    def fullReport = new StringBuilder()
+
+    fullReport << """
 =========================================
 ESLINT FINDINGS REPORT
 =========================================
@@ -111,11 +190,11 @@ Build Number : ${env.BUILD_NUMBER}
 
 """
 
-        report.each { file ->
+    report.each { file ->
 
-            if (file.messages?.size() > 0) {
+        if (file.messages?.size() > 0) {
 
-                fullReport << """
+            fullReport << """
 
 File:
 ${file.filePath}
@@ -124,9 +203,9 @@ ${file.filePath}
 
 """
 
-                file.messages.eachWithIndex { msg, index ->
+            file.messages.eachWithIndex { msg, index ->
 
-                    fullReport << """
+                fullReport << """
 
 Finding #${index + 1}
 
@@ -143,11 +222,11 @@ Message   : ${msg.message ?: 'N/A'}
 -----------------------------------------
 
 """
-                }
             }
         }
+    }
 
-        fullReport << """
+    fullReport << """
 
 =========================================
 SUMMARY
@@ -159,22 +238,34 @@ Warnings : ${warnings}
 
 Status   : ${summary.status}
 
+ExitCode : ${eslintExitCode}
+
 =========================================
 """
 
-        writeFile(
-            file: "${reportDir}/eslint-findings.txt",
-            text: fullReport.toString()
-        )
+    writeFile(
+        file: "${reportDir}/eslint-findings.txt",
+        text: fullReport.toString()
+    )
 
-        writeFile(
-            file: "${reportDir}/eslint-summary.json",
-            text: JsonOutput.prettyPrint(
-                JsonOutput.toJson(summary)
-            )
+    writeFile(
+        file: "${reportDir}/eslint-summary.json",
+        text: JsonOutput.prettyPrint(
+            JsonOutput.toJson(summary)
         )
+    )
 
-        echo """
+    archiveArtifacts(
+        artifacts: "${reportDir}/**",
+        fingerprint: true,
+        allowEmptyArchive: true
+    )
+
+    currentBuild.description =
+        (currentBuild.description ?: "") +
+        " | ESLint[E=${errors},W=${warnings}]"
+
+    echo """
 =========================================
 
 ESLINT SUMMARY
@@ -185,6 +276,8 @@ Warnings    : ${warnings}
 
 Status      : ${summary.status}
 
+Exit Code   : ${eslintExitCode}
+
 Reports
 
 ${reportDir}
@@ -192,81 +285,23 @@ ${reportDir}
 =========================================
 """
 
-        sh """
-            echo "===== GENERATED ESLINT FILES ====="
-            ls -ltr ${reportDir}
-        """
+    if (summary.status == "APPROVAL_REQUIRED") {
 
-        archiveArtifacts(
-            artifacts: "${reportDir}/**",
-            fingerprint: true,
-            allowEmptyArchive: true
-        )
+        error("""
+====================================
 
-        currentBuild.description =
-            (currentBuild.description ?: "") +
-            " | ESLint[E=${errors},W=${warnings}]"
+ESLINT GATE FAILED
 
-        return summary
+Errors Found : ${errors}
+Warnings     : ${warnings}
 
-    } catch (Exception ex) {
+The top ESLint findings were printed above.
 
-        currentBuild.result = "FAILURE"
+Review and fix the violations before proceeding.
 
-        echo """
-==================================================
-
-ESLINT STAGE FAILED
-
-Build Number : ${env.BUILD_NUMBER}
-
-Root Cause
-
-${ex.getMessage()}
-
-Possible Reasons
-
-1. npm ci failed
-   - package-lock.json mismatch
-   - dependency download failure
-   - registry connectivity problem
-
-2. ESLint configuration issue
-   - invalid eslint.config.js
-   - invalid .eslintrc
-   - unsupported rule configuration
-
-3. Missing Dependency
-   - eslint plugin missing
-   - parser missing
-   - package not installed
-
-4. Node.js Out Of Memory
-   - repository too large
-   - .scannerwork scanned by eslint
-   - insufficient NODE_OPTIONS memory
-
-5. Workspace Issue
-   - file permission issue
-   - disk space exhausted
-   - corrupted workspace
-
-Recommended Actions
-
-- Review console logs above
-- Verify npm install succeeds
-- Verify ESLint configuration
-- Verify required plugins are installed
-- Exclude .scannerwork, builds, node_modules
-- Retry after workspace cleanup
-
-Pipeline Status : FAILED
-
-Remaining stages will be skipped.
-
-==================================================
-"""
-
-        error("ESLint stage execution failed. Refer detailed logs above.")
+====================================
+""")
     }
+
+    return summary
 }
