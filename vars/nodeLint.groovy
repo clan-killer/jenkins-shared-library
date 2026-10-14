@@ -1,300 +1,190 @@
+ 
 import groovy.json.JsonOutput
-
+import groovy.json.JsonSlurper
+ 
 def call() {
-
-    def buildDir  = "builds/Build_${env.BUILD_NUMBER}"
+    def buildDir = "builds/Build_${env.BUILD_NUMBER}"
     def reportDir = "${buildDir}/reports/eslint"
-
-    sh "mkdir -p ${reportDir}"
-
-    sh """
-        echo "===================================="
-        echo "NODE VERSION"
+    def jsonReport = "${reportDir}/eslint-report.json"
+ 
+    sh "mkdir -p '${reportDir}'"
+ 
+    echo """
+====================================
+NODE VERSION
+====================================
+"""
+ 
+    sh '''
+        set -eu
         node -v
-
-        echo "===================================="
-        echo "NPM VERSION"
         npm -v
-
-        echo "===================================="
-        echo "INSTALLING DEPENDENCIES"
-
         npm ci
-    """
-
-    echo "===================================="
-    echo "RUNNING ESLINT"
-
-    def eslintExitCode = sh(
+    '''
+ 
+    echo '===================================='
+    echo 'RUNNING ESLINT'
+    echo '===================================='
+ 
+    int eslintExitCode = sh(
         script: """
             export NODE_OPTIONS="--max-old-space-size=4096"
-
-            npx eslint . \
-                --ignore-pattern node_modules \
-                --ignore-pattern .scannerwork \
-                --ignore-pattern builds \
-                --ignore-pattern dist \
-                --ignore-pattern coverage \
-                --format json \
-                --output-file ${reportDir}/eslint-report.json
+ 
+            npx eslint . \\
+              --ignore-pattern node_modules \\
+              --ignore-pattern .scannerwork \\
+              --ignore-pattern builds \\
+              --ignore-pattern dist \\
+              --ignore-pattern coverage \\
+              --format json \\
+              --output-file '${jsonReport}'
         """,
         returnStatus: true
     )
-
-    echo "ESLint Exit Code : ${eslintExitCode}"
-
-    if (!fileExists("${reportDir}/eslint-report.json")) {
-
-        currentBuild.result = "FAILURE"
-
+ 
+    echo "ESLint Exit Code: ${eslintExitCode}"
+ 
+    if (!fileExists(jsonReport)) {
         error("""
-=========================================
-
-PIPELINE EXECUTION FAILED
-
-Stage      : ESLint
-
-Exit Code  : ${eslintExitCode}
-
-Reason
-
 ESLint report was not generated.
-
-Possible Causes
-
-- Node.js Out Of Memory
-- Invalid ESLint configuration
-- Missing ESLint plugin
-- Missing parser
-- Dependency installation issue
-- Workspace permission issue
-
-Action Required
-
-Review console logs above.
-
-=========================================
+ 
+Exit code: ${eslintExitCode}
+ 
+Check Node.js memory, ESLint configuration,
+dependencies, and Jenkins workspace permissions.
 """)
     }
-
+ 
     def report
-
+ 
     try {
-
-        report = readJSON(
-            file: "${reportDir}/eslint-report.json"
+        report = new JsonSlurper().parseText(
+            readFile(jsonReport)
         )
-
     } catch (Exception ex) {
-
-        currentBuild.result = "FAILURE"
-
         error("""
-=========================================
-
-PIPELINE EXECUTION FAILED
-
-Stage      : ESLint
-
-Reason
-
-Generated ESLint report is not valid JSON.
-
-Report File
-
-${reportDir}/eslint-report.json
-
-Actual Error
-
-${ex.getMessage()}
-
-Possible Causes
-
-- ESLint terminated unexpectedly
-- Node.js Out Of Memory
-- Interrupted build
-- Corrupted report file
-- ESLint plugin failure
-
-Action Required
-
-Review console logs above and verify
-eslint-report.json was generated correctly.
-
-=========================================
+ESLint generated an invalid JSON report.
+ 
+File: ${jsonReport}
+Error: ${ex.getMessage()}
 """)
     }
-
+ 
     if (!(report instanceof List)) {
-
-        currentBuild.result = "FAILURE"
-
-        error("""
-=========================================
-
-PIPELINE EXECUTION FAILED
-
-Stage      : ESLint
-
-Reason
-
-Unexpected ESLint report structure.
-
-Expected
-
-JSON Array
-
-Received
-
-${report?.getClass()?.getName()}
-
-Action Required
-
-Verify ESLint generated a valid JSON report.
-
-=========================================
-""")
+        error(
+            "Unexpected ESLint report structure. Expected a JSON array."
+        )
     }
-
+ 
     int errors = 0
     int warnings = 0
-
+ 
     report.each { file ->
-
-        errors += file.errorCount ?: 0
-        warnings += file.warningCount ?: 0
+        errors += (file.errorCount ?: 0) as int
+        warnings += (file.warningCount ?: 0) as int
     }
-
+ 
+    String status
+ 
+    if (eslintExitCode > 1) {
+        status = 'FAILURE'
+    } else if (errors > 0) {
+        status = 'APPROVAL_REQUIRED'
+    } else if (warnings > 0 || eslintExitCode != 0) {
+        status = 'WARNING'
+    } else {
+        status = 'SUCCESS'
+    }
+ 
     def summary = [
-        tool     : "ESLint",
+        tool     : 'ESLint',
         errors   : errors,
         warnings : warnings,
-        status   : "SUCCESS"
+        exitCode : eslintExitCode,
+        status   : status
     ]
-
-    if (errors > 0) {
-
-        summary.status = "APPROVAL_REQUIRED"
-
-    } else if (warnings > 0) {
-
-        summary.status = "WARNING"
-    }
-
+ 
     def fullReport = new StringBuilder()
-
+ 
     fullReport << """
 =========================================
 ESLINT FINDINGS REPORT
 =========================================
-
-Generated By : Jenkins
-
+ 
 Build Number : ${env.BUILD_NUMBER}
-
+ 
+Errors       : ${errors}
+Warnings     : ${warnings}
+Exit Code    : ${eslintExitCode}
+Status       : ${status}
+ 
 =========================================
-
 """
-
+ 
     report.each { file ->
-
         if (file.messages?.size() > 0) {
-
             fullReport << """
-
-File:
-${file.filePath}
-
+ 
+File: ${file.filePath}
+ 
 -----------------------------------------
-
 """
-
+ 
             file.messages.eachWithIndex { msg, index ->
-
+                String severity =
+                    msg.severity == 2 ? 'ERROR' : 'WARNING'
+ 
                 fullReport << """
-
 Finding #${index + 1}
-
-Line      : ${msg.line ?: 'N/A'}
-
-Column    : ${msg.column ?: 'N/A'}
-
-Severity  : ${msg.severity == 2 ? 'ERROR' : 'WARNING'}
-
-Rule      : ${msg.ruleId ?: 'N/A'}
-
-Message   : ${msg.message ?: 'N/A'}
-
+ 
+Line     : ${msg.line ?: 'N/A'}
+Column   : ${msg.column ?: 'N/A'}
+Severity : ${severity}
+Rule     : ${msg.ruleId ?: 'N/A'}
+Message  : ${msg.message ?: 'N/A'}
+ 
 -----------------------------------------
-
 """
             }
         }
     }
-
-    fullReport << """
-
-=========================================
-SUMMARY
-=========================================
-
-Errors   : ${errors}
-
-Warnings : ${warnings}
-
-Status   : ${summary.status}
-
-ExitCode : ${eslintExitCode}
-
-=========================================
-"""
-
+ 
     writeFile(
         file: "${reportDir}/eslint-findings.txt",
         text: fullReport.toString()
     )
-
+ 
     writeFile(
         file: "${reportDir}/eslint-summary.json",
         text: JsonOutput.prettyPrint(
             JsonOutput.toJson(summary)
         )
     )
-
-    echo """
-=========================================
-
-ESLINT SUMMARY
-
-Errors      : ${errors}
-
-Warnings    : ${warnings}
-
-Status      : ${summary.status}
-
-Exit Code   : ${eslintExitCode}
-
-Reports
-
-${reportDir}
-
-=========================================
-"""
-
-    sh """
-        echo "===== GENERATED ESLINT FILES ====="
-        ls -ltr ${reportDir}
-    """
-
+ 
     archiveArtifacts(
         artifacts: "${reportDir}/**",
         fingerprint: true,
-        allowEmptyArchive: true
+        allowEmptyArchive: false
     )
-
+ 
     currentBuild.description =
-        (currentBuild.description ?: "") +
+        (currentBuild.description ?: '') +
         " | ESLint[E=${errors},W=${warnings}]"
-
+ 
+    echo """
+=========================================
+ESLINT SUMMARY
+=========================================
+ 
+Errors   : ${errors}
+Warnings : ${warnings}
+Exit Code: ${eslintExitCode}
+Status   : ${status}
+ 
+Reports  : ${reportDir}
+ 
+=========================================
+"""
+ 
     return summary
 }

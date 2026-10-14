@@ -1,424 +1,319 @@
+ 
 import groovy.json.JsonOutput
-import groovy.json.JsonSlurperClassic
-
+import groovy.json.JsonSlurper
+ 
 def call(Map config = [:]) {
-
-    def buildDir  = "builds/Build_${env.BUILD_NUMBER}"
+ 
+    def sonarUrl = config.sonarUrl?.toString()?.replaceAll('/+$', '')
+    def projectKey = config.projectKey?.toString()
+    def projectName = config.projectName?.toString() ?: projectKey
+    def serverName = config.serverName?.toString() ?: 'SonarQube-Production'
+    def scannerTool = config.scannerTool?.toString() ?: 'SonarScanner'
+    def sources = config.sources?.toString() ?: 'src'
+ 
+    def analysisCredentialId =
+        config.analysisCredentialsId?.toString()
+ 
+    def reportCredentialId =
+        config.reportCredentialsId?.toString()
+ 
+    if (!sonarUrl ||
+        !projectKey ||
+        !analysisCredentialId ||
+        !reportCredentialId) {
+ 
+        error("""
+SonarQube configuration is incomplete.
+ 
+Required:
+- sonarUrl
+- projectKey
+- analysisCredentialsId
+- reportCredentialsId
+""")
+    }
+ 
+    def buildDir = "builds/Build_${env.BUILD_NUMBER}"
     def reportDir = "${buildDir}/reports/sonar"
-
-    sh "mkdir -p ${reportDir}"
-
-    def projectType = detectProject()
-
-    def projectKey = config.projectKey
-
-    def sonarCredentialId =
-        config.credentialsId ?: env.SONAR_CRED_ID ?: 'sonar-token'
-
-    if (!projectKey?.trim()) {
-        error("Sonar projectKey not provided")
-    }
-
+ 
+    sh "mkdir -p '${reportDir}'"
+ 
+    def scannerHome = tool scannerTool
+ 
     echo """
-====================================
-
-SONAR SCAN
-
-Project Type : ${projectType}
-
+=========================================
+SONARQUBE ANALYSIS
+=========================================
+ 
+Project      : ${projectName}
 Project Key  : ${projectKey}
-
-Credential   : ${sonarCredentialId}
-
-====================================
+Server       : ${sonarUrl}
+Scanner Tool : ${scannerTool}
+ 
+=========================================
 """
-
-    echo "Verifying SonarQube Connectivity..."
-
-    withSonarQubeEnv('SonarQube') {
-
-        withCredentials([
-            string(
-                credentialsId: sonarCredentialId,
-                variable: 'SONAR_TOKEN'
-            )
+ 
+    /*
+     * PHASE 1: Submit analysis.
+     * The Jenkins SonarQube plugin supplies the
+     * selected project's analysis credential.
+     */
+ 
+    withSonarQubeEnv(
+        installationName: serverName,
+        credentialsId: analysisCredentialId
+    ) {
+        withEnv([
+            "SONAR_PROJECT_KEY=${projectKey}",
+            "SONAR_PROJECT_NAME=${projectName}",
+            "SONAR_SOURCES=${sources}",
+            "SONAR_SCANNER_BIN=${scannerHome}/bin/sonar-scanner"
         ]) {
-
-            sh """
-                echo "===================================="
-                echo "SONAR CONNECTIVITY TEST"
-                echo "===================================="
-
-                echo "SONAR_HOST_URL=\$SONAR_HOST_URL"
-                echo "PROJECT_KEY=${projectKey}"
-
-                echo ""
-                echo "Checking Sonar Status..."
-
-                curl -s \
-                    "\$SONAR_HOST_URL/api/system/status"
-
-                echo ""
-                echo ""
-                echo "Checking Token..."
-
-                curl -s \
-                    -u "\$SONAR_TOKEN:" \
-                    "\$SONAR_HOST_URL/api/authentication/validate"
-
-                echo ""
-                echo ""
-                echo "Checking Project..."
-
-                curl -s \
-                    -u "\$SONAR_TOKEN:" \
-                    "\$SONAR_HOST_URL/api/projects/search?projects=${projectKey}"
-
-                echo ""
-                echo ""
-                echo "===================================="
-            """
-        }
-    }
-
-    switch(projectType) {
-
-        case "NODE":
-        case "NESTJS":
-
-            def scannerHome = tool 'SonarScanner'
-
-            withCredentials([
-                string(
-                    credentialsId: sonarCredentialId,
-                    variable: 'SONAR_TOKEN'
-                )
-            ]) {
-
-                withSonarQubeEnv('SonarQube') {
-
-                    sh """
-                        ${scannerHome}/bin/sonar-scanner \
-                        -Dsonar.projectKey=${projectKey} \
-                        -Dsonar.projectName=${projectKey} \
-                        -Dsonar.sources=. \
-                        -Dsonar.sourceEncoding=UTF-8 \
-                        -Dsonar.token=\$SONAR_TOKEN
-                    """
-                }
-            }
-
-            break
-
-        case "MAVEN":
-
-            withCredentials([
-                string(
-                    credentialsId: sonarCredentialId,
-                    variable: 'SONAR_TOKEN'
-                )
-            ]) {
-
-                withSonarQubeEnv('SonarQube') {
-
-                    sh """
-                        mvn sonar:sonar \
-                        -Dsonar.projectKey=${projectKey} \
-                        -Dsonar.token=\$SONAR_TOKEN
-                    """
-                }
-            }
-
-            break
-
-        case "GRADLE":
-
-            withCredentials([
-                string(
-                    credentialsId: sonarCredentialId,
-                    variable: 'SONAR_TOKEN'
-                )
-            ]) {
-
-                withSonarQubeEnv('SonarQube') {
-
-                    sh """
-                        ./gradlew sonarqube \
-                        -Dsonar.projectKey=${projectKey} \
-                        -Dsonar.token=\$SONAR_TOKEN
-                    """
-                }
-            }
-
-            break
-
-        case "PYTHON":
-        case "GO":
-
-            def scannerHome = tool 'SonarScanner'
-
-            withCredentials([
-                string(
-                    credentialsId: sonarCredentialId,
-                    variable: 'SONAR_TOKEN'
-                )
-            ]) {
-
-                withSonarQubeEnv('SonarQube') {
-
-                    sh """
-                        ${scannerHome}/bin/sonar-scanner \
-                        -Dsonar.projectKey=${projectKey} \
-                        -Dsonar.projectName=${projectKey} \
-                        -Dsonar.sources=. \
-                        -Dsonar.sourceEncoding=UTF-8 \
-                        -Dsonar.token=\$SONAR_TOKEN
-                    """
-                }
-            }
-
-            break
-
-        default:
-
-            error("Unsupported project type: ${projectType}")
-    }
-
-    echo """
-====================================
-
-WAITING FOR QUALITY GATE
-
-Project Key : ${projectKey}
-
-====================================
-"""
-
-    def qgStatus = "UNKNOWN"
-
-    timeout(time: 15, unit: 'MINUTES') {
-
-        echo "Quality Gate monitoring started..."
-
-        def qg = waitForQualityGate()
-
-        qgStatus = qg.status
-
-        echo "Quality Gate response received..."
-    }
-
-    echo "Quality Gate Status: ${qgStatus}"
-
-    withSonarQubeEnv('SonarQube') {
-
-        withCredentials([
-            string(
-                credentialsId: sonarCredentialId,
-                variable: 'SONAR_TOKEN'
+            sh(
+                label: 'Run SonarScanner',
+                script: '''
+                    set -eu
+ 
+                    "$SONAR_SCANNER_BIN" \
+                      -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
+                      -Dsonar.projectName="$SONAR_PROJECT_NAME" \
+                      -Dsonar.sources="$SONAR_SOURCES" \
+                      -Dsonar.sourceEncoding=UTF-8 \
+                      -Dsonar.exclusions="node_modules/**,dist/**,coverage/**,builds/**"
+                '''
             )
-        ]) {
-
-            sh """
-                curl -s \
-                -u "\$SONAR_TOKEN:" \
-                "\$SONAR_HOST_URL/api/measures/component?component=${projectKey}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density" \
-                -o ${reportDir}/sonar-${projectKey}-summary-raw.json
-            """
         }
     }
-
-    def allIssues = []
-
-    withSonarQubeEnv('SonarQube') {
-
-        withCredentials([
-            string(
-                credentialsId: sonarCredentialId,
-                variable: 'SONAR_TOKEN'
+ 
+    /*
+     * PHASE 2: Wait for the completed quality gate.
+     *
+     * Requires a SonarQube webhook pointing to:
+     * https://jenkins.example.com/sonarqube-webhook/
+     */
+ 
+    def qualityGate
+ 
+    timeout(time: 10, unit: 'MINUTES') {
+        qualityGate = waitForQualityGate()
+    }
+ 
+    def qualityGateStatus = qualityGate?.status ?: 'N/A'
+ 
+    /*
+     * PHASE 3: Read metrics and issues.
+     *
+     * This credential must have Browse permission
+     * on the target project.
+     */
+ 
+    def encodedProjectKey =
+        java.net.URLEncoder.encode(projectKey, 'UTF-8')
+ 
+    def apiGet = { String apiPath, String outputFile ->
+ 
+        def httpCode
+ 
+        withEnv([
+            "SONAR_API_URL=${sonarUrl}${apiPath}",
+            "SONAR_OUTPUT_FILE=${outputFile}"
+        ]) {
+            httpCode = sh(
+                label: 'Query SonarQube API',
+                script: '''
+                    set +x
+ 
+                    curl --silent --show-error \
+                      --output "$SONAR_OUTPUT_FILE" \
+                      --write-out '%{http_code}' \
+                      --user "$SONAR_TOKEN:" \
+                      "$SONAR_API_URL"
+                ''',
+                returnStdout: true
+            ).trim()
+        }
+ 
+        if (httpCode != '200') {
+            error(
+                "SonarQube API returned HTTP ${httpCode} " +
+                "for project ${projectKey}. " +
+                "Check the reporting token, Browse permission, URL and API parameters."
             )
-        ]) {
-
-            int page = 1
-            int pageSize = 500
-            boolean hasMore = true
-
-            while (hasMore) {
-
-                sh """
-                    curl -s \
-                    -u "\$SONAR_TOKEN:" \
-                    "\$SONAR_HOST_URL/api/issues/search?componentKeys=${projectKey}&ps=${pageSize}&p=${page}" \
-                    -o ${reportDir}/sonar-page.json
-                """
-
-                def pageData = new JsonSlurperClassic().parse(
-                    new File(
-                        "${env.WORKSPACE}/${reportDir}/sonar-page.json"
-                    )
-                )
-
-                if (pageData.issues) {
-                    allIssues.addAll(pageData.issues)
-                }
-
-                hasMore = pageData.issues?.size() == pageSize
-                page++
-            }
         }
-    }
-
-    writeFile(
-        file: "${reportDir}/sonar-${projectKey}-issues.json",
-        text: JsonOutput.prettyPrint(
-            JsonOutput.toJson([
-                total : allIssues.size(),
-                issues: allIssues
-            ])
-        )
-    )
-
-    def sonarData = new JsonSlurperClassic().parse(
-        new File(
-            "${env.WORKSPACE}/${reportDir}/sonar-${projectKey}-summary-raw.json"
-        )
-    )
-
-    def measures = sonarData?.component?.measures ?: []
-
-    int blocker  = 0
-    int critical = 0
-    int major    = 0
-    int minor    = 0
-    int info     = 0
-
-    allIssues.each { issue ->
-
-        switch(issue.severity) {
-
-            case "BLOCKER":
-                blocker++
-                break
-
-            case "CRITICAL":
-                critical++
-                break
-
-            case "MAJOR":
-                major++
-                break
-
-            case "MINOR":
-                minor++
-                break
-
-            case "INFO":
-                info++
-                break
+ 
+        def response
+ 
+        try {
+            response = new JsonSlurper().parseText(
+                readFile(outputFile)
+            )
+        } catch (Exception ex) {
+            error(
+                "Invalid SonarQube API JSON in ${outputFile}: " +
+                ex.getMessage()
+            )
         }
+ 
+        if (response.errors) {
+            error(
+                "SonarQube API error: ${response.errors}"
+            )
+        }
+ 
+        return response
     }
-
-    def summary = [
-        projectType     : projectType,
-        bugs            : 0,
-        vulnerabilities : 0,
-        codeSmells      : 0,
-        coverage        : 0,
-        duplication     : 0,
-        blocker         : blocker,
-        critical        : critical,
-        major           : major,
-        minor           : minor,
-        info            : info,
-        qualityGate     : qgStatus,
-        status          : "SUCCESS"
+ 
+    def metrics
+    def issueCounts = [
+        blocker  : 0,
+        critical : 0,
+        major    : 0,
+        minor    : 0
     ]
-
-    measures.each { measure ->
-
-        switch(measure.metric) {
-
-            case "bugs":
-                summary.bugs = measure.value.toInteger()
-                break
-
-            case "vulnerabilities":
-                summary.vulnerabilities = measure.value.toInteger()
-                break
-
-            case "code_smells":
-                summary.codeSmells = measure.value.toInteger()
-                break
-
-            case "coverage":
-                summary.coverage = measure.value.toBigDecimal()
-                break
-
-            case "duplicated_lines_density":
-                summary.duplication = measure.value.toBigDecimal()
-                break
+ 
+    withCredentials([
+        string(
+            credentialsId: reportCredentialId,
+            variable: 'SONAR_TOKEN'
+        )
+    ]) {
+ 
+        /*
+         * Fetch project measures.
+         */
+ 
+        def measuresPath =
+            "/api/measures/component" +
+            "?component=${encodedProjectKey}" +
+            "&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density"
+ 
+        def measuresJson = apiGet(
+            measuresPath,
+            "${reportDir}/sonar-measures.json"
+        )
+ 
+        if (!measuresJson.component) {
+            error(
+                "SonarQube returned no component for ${projectKey}. " +
+                "Verify the project key and project access."
+            )
+        }
+ 
+        metrics = [:]
+ 
+        (measuresJson.component.measures ?: []).each {
+            metrics[it.metric] = it.value
+        }
+ 
+        /*
+         * Count unresolved issues by legacy severity.
+         * API support can differ by SonarQube version.
+         */
+ 
+        def severityMap = [
+            BLOCKER  : 'blocker',
+            CRITICAL : 'critical',
+            MAJOR    : 'major',
+            MINOR    : 'minor'
+        ]
+ 
+        severityMap.each { severity, resultKey ->
+ 
+            def issuesPath =
+                "/api/issues/search" +
+                "?componentKeys=${encodedProjectKey}" +
+                "&resolved=false" +
+                "&severities=${severity}" +
+                "&ps=1"
+ 
+            def issuesJson = apiGet(
+                issuesPath,
+                "${reportDir}/sonar-issues-${severity.toLowerCase()}.json"
+            )
+ 
+            issueCounts[resultKey] =
+                (issuesJson.total ?: 0) as int
         }
     }
-
-    if (summary.blocker > 0) {
-
-        summary.status = "FAILED"
-
-    } else if ("ERROR".equalsIgnoreCase(summary.qualityGate)) {
-
-        summary.status = "APPROVAL_REQUIRED"
-
-    } else if (summary.critical > 0) {
-
-        summary.status = "APPROVAL_REQUIRED"
-
-    } else if (summary.major > 0 ||
-               summary.minor > 0) {
-
-        summary.status = "WARNING"
-    }
-
+ 
+    def result = [
+        status       : qualityGateStatus == 'OK' ? 'SUCCESS' : 'FAILURE',
+        projectKey   : projectKey,
+        qualityGate  : qualityGateStatus,
+ 
+        bugs         : metrics['bugs'] ?: '0',
+        vulnerabilities : metrics['vulnerabilities'] ?: '0',
+        codeSmells   : metrics['code_smells'] ?: '0',
+        coverage     : metrics['coverage'] ?: 'N/A',
+        duplications : metrics['duplicated_lines_density'] ?: '0',
+ 
+        blocker      : issueCounts.blocker,
+        critical     : issueCounts.critical,
+        major        : issueCounts.major,
+        minor        : issueCounts.minor
+    ]
+ 
     writeFile(
         file: "${reportDir}/sonar-summary.json",
         text: JsonOutput.prettyPrint(
-            JsonOutput.toJson(summary)
+            JsonOutput.toJson(result)
         )
     )
-
+ 
+    writeFile(
+        file: "${reportDir}/sonar-summary.txt",
+        text: """
+=========================================
+SONARQUBE SUMMARY
+=========================================
+ 
+Project       : ${projectKey}
+Status        : ${result.status}
+Quality Gate  : ${result.qualityGate}
+ 
+Bugs          : ${result.bugs}
+Vulnerabilities: ${result.vulnerabilities}
+Code Smells   : ${result.codeSmells}
+Coverage      : ${result.coverage}%
+Duplications  : ${result.duplications}%
+ 
+Blocker       : ${result.blocker}
+Critical      : ${result.critical}
+Major         : ${result.major}
+Minor         : ${result.minor}
+ 
+=========================================
+"""
+    )
+ 
     archiveArtifacts(
         artifacts: "${reportDir}/**",
         fingerprint: true,
-        allowEmptyArchive: true
+        allowEmptyArchive: false
     )
-
-    currentBuild.description =
-        (currentBuild.description ?: "") +
-        " | Sonar[QG=${summary.qualityGate},BL=${summary.blocker},CR=${summary.critical}]"
-
+ 
     echo """
-===================================================
-
-SONAR SUMMARY
-
-Quality Gate : ${summary.qualityGate}
-
-Blocker      : ${summary.blocker}
-Critical     : ${summary.critical}
-Major        : ${summary.major}
-Minor        : ${summary.minor}
-Info         : ${summary.info}
-
-Status       : ${summary.status}
-
-Reports
-
-${reportDir}
-
-===================================================
+=========================================
+SONARQUBE SUMMARY
+=========================================
+ 
+Project      : ${projectKey}
+Quality Gate : ${result.qualityGate}
+Bugs         : ${result.bugs}
+Vulnerabilities: ${result.vulnerabilities}
+Code Smells  : ${result.codeSmells}
+Coverage     : ${result.coverage}
+Duplications : ${result.duplications}
+ 
+Blocker      : ${result.blocker}
+Critical     : ${result.critical}
+Major        : ${result.major}
+Minor        : ${result.minor}
+ 
+Reports      : ${reportDir}
+ 
+=========================================
 """
-
-    if (summary.blocker > 0) {
-        error("SonarQube Blocker issues found")
-    }
-
-    return summary
+ 
+    return result
 }
