@@ -7,77 +7,98 @@ def call() {
 
     sh "mkdir -p ${reportDir}"
 
-    sh """
-        echo "===================================="
-        echo "NODE VERSION"
-        node -v
+    try {
 
-        echo "===================================="
-        echo "NPM VERSION"
-        npm -v
+        sh """
+            echo "===================================="
+            echo "NODE VERSION"
+            node -v
 
-        echo "===================================="
-        echo "INSTALLING DEPENDENCIES"
+            echo "===================================="
+            echo "NPM VERSION"
+            npm -v
 
-        npm ci
-    """
+            echo "===================================="
+            echo "INSTALLING DEPENDENCIES"
 
-    echo "===================================="
-    echo "RUNNING ESLINT"
+            npm ci
+        """
 
-    def eslintExitCode = sh(
-        script: """
+        echo """
+====================================
+
+RUNNING ESLINT
+
+====================================
+"""
+
+        sh """
+            export NODE_OPTIONS="--max-old-space-size=4096"
+
             npx eslint . \
+                --ignore-pattern node_modules \
+                --ignore-pattern .scannerwork \
+                --ignore-pattern builds \
+                --ignore-pattern dist \
+                --ignore-pattern coverage \
                 --format json \
                 --output-file ${reportDir}/eslint-report.json
-        """,
-        returnStatus: true
-    )
+        """
 
-    echo "ESLint Exit Code : ${eslintExitCode}"
+        if (!fileExists("${reportDir}/eslint-report.json")) {
 
-    if (!fileExists("${reportDir}/eslint-report.json")) {
+            error("""
+====================================
 
-        echo "ESLint report not generated. Creating empty report."
+ESLINT REPORT NOT GENERATED
 
-        writeFile(
-            file: "${reportDir}/eslint-report.json",
-            text: "[]"
+Expected Report:
+
+${reportDir}/eslint-report.json
+
+Possible Causes:
+
+- ESLint execution failed
+- Invalid ESLint configuration
+- Missing ESLint plugins
+- Workspace permission issues
+
+====================================
+""")
+        }
+
+        def report = readJSON(
+            file: "${reportDir}/eslint-report.json"
         )
-    }
 
-    def report = readJSON(
-        file: "${reportDir}/eslint-report.json"
-    )
+        int errors = 0
+        int warnings = 0
 
-    int errors = 0
-    int warnings = 0
+        report.each { file ->
 
-    report.each { file ->
+            errors += file.errorCount ?: 0
+            warnings += file.warningCount ?: 0
+        }
 
-        errors += file.errorCount ?: 0
-        warnings += file.warningCount ?: 0
-    }
+        def summary = [
+            tool     : "ESLint",
+            errors   : errors,
+            warnings : warnings,
+            status   : "SUCCESS"
+        ]
 
-    def summary = [
-        tool     : "ESLint",
-        errors   : errors,
-        warnings : warnings,
-        status   : "SUCCESS"
-    ]
+        if (errors > 0) {
 
-    if (errors > 0) {
+            summary.status = "APPROVAL_REQUIRED"
 
-        summary.status = "APPROVAL_REQUIRED"
+        } else if (warnings > 0) {
 
-    } else if (warnings > 0) {
+            summary.status = "WARNING"
+        }
 
-        summary.status = "WARNING"
-    }
+        def fullReport = new StringBuilder()
 
-    def fullReport = new StringBuilder()
-
-    fullReport << """
+        fullReport << """
 =========================================
 ESLINT FINDINGS REPORT
 =========================================
@@ -90,11 +111,11 @@ Build Number : ${env.BUILD_NUMBER}
 
 """
 
-    report.each { file ->
+        report.each { file ->
 
-        if (file.messages?.size() > 0) {
+            if (file.messages?.size() > 0) {
 
-            fullReport << """
+                fullReport << """
 
 File:
 ${file.filePath}
@@ -103,9 +124,9 @@ ${file.filePath}
 
 """
 
-            file.messages.eachWithIndex { msg, index ->
+                file.messages.eachWithIndex { msg, index ->
 
-                fullReport << """
+                    fullReport << """
 
 Finding #${index + 1}
 
@@ -122,11 +143,11 @@ Message   : ${msg.message ?: 'N/A'}
 -----------------------------------------
 
 """
+                }
             }
         }
-    }
 
-    fullReport << """
+        fullReport << """
 
 =========================================
 SUMMARY
@@ -138,24 +159,22 @@ Warnings : ${warnings}
 
 Status   : ${summary.status}
 
-ExitCode : ${eslintExitCode}
-
 =========================================
 """
 
-    writeFile(
-        file: "${reportDir}/eslint-findings.txt",
-        text: fullReport.toString()
-    )
-
-    writeFile(
-        file: "${reportDir}/eslint-summary.json",
-        text: JsonOutput.prettyPrint(
-            JsonOutput.toJson(summary)
+        writeFile(
+            file: "${reportDir}/eslint-findings.txt",
+            text: fullReport.toString()
         )
-    )
 
-    echo """
+        writeFile(
+            file: "${reportDir}/eslint-summary.json",
+            text: JsonOutput.prettyPrint(
+                JsonOutput.toJson(summary)
+            )
+        )
+
+        echo """
 =========================================
 
 ESLINT SUMMARY
@@ -166,8 +185,6 @@ Warnings    : ${warnings}
 
 Status      : ${summary.status}
 
-Exit Code   : ${eslintExitCode}
-
 Reports
 
 ${reportDir}
@@ -175,20 +192,81 @@ ${reportDir}
 =========================================
 """
 
-    sh """
-        echo "===== GENERATED ESLINT FILES ====="
-        ls -ltr ${reportDir}
-    """
+        sh """
+            echo "===== GENERATED ESLINT FILES ====="
+            ls -ltr ${reportDir}
+        """
 
-    archiveArtifacts(
-        artifacts: "${reportDir}/**",
-        fingerprint: true,
-        allowEmptyArchive: true
-    )
+        archiveArtifacts(
+            artifacts: "${reportDir}/**",
+            fingerprint: true,
+            allowEmptyArchive: true
+        )
 
-    currentBuild.description =
-        (currentBuild.description ?: "") +
-        " | ESLint[E=${errors},W=${warnings}]"
+        currentBuild.description =
+            (currentBuild.description ?: "") +
+            " | ESLint[E=${errors},W=${warnings}]"
 
-    return summary
+        return summary
+
+    } catch (Exception ex) {
+
+        currentBuild.result = "FAILURE"
+
+        echo """
+==================================================
+
+ESLINT STAGE FAILED
+
+Build Number : ${env.BUILD_NUMBER}
+
+Root Cause
+
+${ex.getMessage()}
+
+Possible Reasons
+
+1. npm ci failed
+   - package-lock.json mismatch
+   - dependency download failure
+   - registry connectivity problem
+
+2. ESLint configuration issue
+   - invalid eslint.config.js
+   - invalid .eslintrc
+   - unsupported rule configuration
+
+3. Missing Dependency
+   - eslint plugin missing
+   - parser missing
+   - package not installed
+
+4. Node.js Out Of Memory
+   - repository too large
+   - .scannerwork scanned by eslint
+   - insufficient NODE_OPTIONS memory
+
+5. Workspace Issue
+   - file permission issue
+   - disk space exhausted
+   - corrupted workspace
+
+Recommended Actions
+
+- Review console logs above
+- Verify npm install succeeds
+- Verify ESLint configuration
+- Verify required plugins are installed
+- Exclude .scannerwork, builds, node_modules
+- Retry after workspace cleanup
+
+Pipeline Status : FAILED
+
+Remaining stages will be skipped.
+
+==================================================
+"""
+
+        error("ESLint stage execution failed. Refer detailed logs above.")
+    }
 }
