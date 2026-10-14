@@ -196,7 +196,7 @@ Project Key : ${projectKey}
 
     def qgStatus = "UNKNOWN"
 
-    timeout(time: 5, unit: 'MINUTES') {
+    timeout(time: 15, unit: 'MINUTES') {
 
         echo "Quality Gate monitoring started..."
 
