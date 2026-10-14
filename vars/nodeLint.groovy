@@ -7,35 +7,23 @@ def call() {
 
     sh "mkdir -p ${reportDir}"
 
-    echo """
-====================================
-NODE VERSION
-====================================
-"""
+    sh """
+        echo "===================================="
+        echo "NODE VERSION"
+        node -v
 
-    sh "node -v"
+        echo "===================================="
+        echo "NPM VERSION"
+        npm -v
 
-    echo """
-====================================
-NPM VERSION
-====================================
-"""
+        echo "===================================="
+        echo "INSTALLING DEPENDENCIES"
 
-    sh "npm -v"
+        npm ci
+    """
 
-    echo """
-====================================
-INSTALLING DEPENDENCIES
-====================================
-"""
-
-    sh "npm ci"
-
-    echo """
-====================================
-RUNNING ESLINT
-====================================
-"""
+    echo "===================================="
+    echo "RUNNING ESLINT"
 
     def eslintExitCode = sh(
         script: """
@@ -60,31 +48,113 @@ RUNNING ESLINT
         currentBuild.result = "FAILURE"
 
         error("""
-====================================
+=========================================
 
-ESLINT EXECUTION FAILED
+PIPELINE EXECUTION FAILED
 
-Report file was not generated.
+Stage      : ESLint
 
-Expected:
+Exit Code  : ${eslintExitCode}
 
-${reportDir}/eslint-report.json
+Reason
 
-Common Causes:
+ESLint report was not generated.
 
-- ESLint configuration error
+Possible Causes
+
 - Node.js Out Of Memory
+- Invalid ESLint configuration
 - Missing ESLint plugin
 - Missing parser
-- Invalid package installation
+- Dependency installation issue
+- Workspace permission issue
 
-====================================
+Action Required
+
+Review console logs above.
+
+=========================================
 """)
     }
 
-    def report = readJSON(
-        file: "${reportDir}/eslint-report.json"
-    )
+    def report
+
+    try {
+
+        report = readJSON(
+            file: "${reportDir}/eslint-report.json"
+        )
+
+    } catch (Exception ex) {
+
+        currentBuild.result = "FAILURE"
+
+        error("""
+=========================================
+
+PIPELINE EXECUTION FAILED
+
+Stage      : ESLint
+
+Reason
+
+Generated ESLint report is not valid JSON.
+
+Report File
+
+${reportDir}/eslint-report.json
+
+Actual Error
+
+${ex.getMessage()}
+
+Possible Causes
+
+- ESLint terminated unexpectedly
+- Node.js Out Of Memory
+- Interrupted build
+- Corrupted report file
+- ESLint plugin failure
+
+Action Required
+
+Review console logs above and verify
+eslint-report.json was generated correctly.
+
+=========================================
+""")
+    }
+
+    if (!(report instanceof List)) {
+
+        currentBuild.result = "FAILURE"
+
+        error("""
+=========================================
+
+PIPELINE EXECUTION FAILED
+
+Stage      : ESLint
+
+Reason
+
+Unexpected ESLint report structure.
+
+Expected
+
+JSON Array
+
+Received
+
+${report?.getClass()?.getName()}
+
+Action Required
+
+Verify ESLint generated a valid JSON report.
+
+=========================================
+""")
+    }
 
     int errors = 0
     int warnings = 0
@@ -93,70 +163,6 @@ Common Causes:
 
         errors += file.errorCount ?: 0
         warnings += file.warningCount ?: 0
-    }
-
-    if (eslintExitCode != 0) {
-
-        echo """
-====================================
-ESLINT FINDINGS (TOP RESULTS)
-====================================
-"""
-
-        int displayedFiles = 0
-
-        report.each { file ->
-
-            if (displayedFiles >= 20) {
-                return
-            }
-
-            if (file.messages?.size() > 0) {
-
-                echo """
-------------------------------------
-FILE
-${file.filePath}
-------------------------------------
-"""
-
-                int displayedMessages = 0
-
-                file.messages.each { msg ->
-
-                    if (displayedMessages >= 10) {
-                        return
-                    }
-
-                    echo """
-Line      : ${msg.line ?: 'N/A'}
-Column    : ${msg.column ?: 'N/A'}
-Severity  : ${msg.severity == 2 ? 'ERROR' : 'WARNING'}
-Rule      : ${msg.ruleId ?: 'N/A'}
-Message   : ${msg.message ?: 'N/A'}
-------------------------------------
-"""
-
-                    displayedMessages++
-                }
-
-                displayedFiles++
-            }
-        }
-
-        echo """
-====================================
-
-ESLINT VALIDATION FAILED
-
-Total Errors   : ${errors}
-Total Warnings : ${warnings}
-
-See full report:
-${reportDir}/eslint-findings.txt
-
-====================================
-"""
     }
 
     def summary = [
@@ -255,16 +261,6 @@ ExitCode : ${eslintExitCode}
         )
     )
 
-    archiveArtifacts(
-        artifacts: "${reportDir}/**",
-        fingerprint: true,
-        allowEmptyArchive: true
-    )
-
-    currentBuild.description =
-        (currentBuild.description ?: "") +
-        " | ESLint[E=${errors},W=${warnings}]"
-
     echo """
 =========================================
 
@@ -285,23 +281,20 @@ ${reportDir}
 =========================================
 """
 
-    if (summary.status == "APPROVAL_REQUIRED") {
+    sh """
+        echo "===== GENERATED ESLINT FILES ====="
+        ls -ltr ${reportDir}
+    """
 
-        error("""
-====================================
+    archiveArtifacts(
+        artifacts: "${reportDir}/**",
+        fingerprint: true,
+        allowEmptyArchive: true
+    )
 
-ESLINT GATE FAILED
-
-Errors Found : ${errors}
-Warnings     : ${warnings}
-
-The top ESLint findings were printed above.
-
-Review and fix the violations before proceeding.
-
-====================================
-""")
-    }
+    currentBuild.description =
+        (currentBuild.description ?: "") +
+        " | ESLint[E=${errors},W=${warnings}]"
 
     return summary
 }
